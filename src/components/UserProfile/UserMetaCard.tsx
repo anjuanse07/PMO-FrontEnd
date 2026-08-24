@@ -31,7 +31,7 @@ export default function UserMetaCard() {
                 </p>
               </div>
             </div>
-            <div className="flex items-center order-2 gap-2 grow xl:order-3 xl:justify-end">
+            {/* <div className="flex items-center order-2 gap-2 grow xl:order-3 xl:justify-end">
               <a
                 href="https://www.facebook.com/PimjoHQ"
                 target="_blank"
@@ -115,7 +115,7 @@ export default function UserMetaCard() {
                   />
                 </svg>
               </a>
-            </div>
+            </div> */}
           </div>
           <button
             onClick={openModal}
@@ -157,7 +157,7 @@ export default function UserMetaCard() {
                   Social Links
                 </h5>
 
-                <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
+                {/* <div className="grid grid-cols-1 gap-x-6 gap-y-5 lg:grid-cols-2">
                   <div>
                     <Label>Facebook</Label>
                     <Input
@@ -183,7 +183,7 @@ export default function UserMetaCard() {
                     <Label>Instagram</Label>
                     <Input type="text" value="https://instagram.com/PimjoHQ" />
                   </div>
-                </div>
+                </div> */}
               </div>
               <div className="mt-7">
                 <h5 className="mb-5 text-lg font-medium text-gray-800 dark:text-white/90 lg:mb-6">
