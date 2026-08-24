@@ -13,9 +13,10 @@ import {
 } from "../components/ui/table";
 import Badge from "../components/ui/badge/Badge";
 import { type MaintenanceOrder } from "../data/preventiveMaintenanceData";
-import { fetchApprovedOrders } from "../services/pmoApi";
+import { fetchApprovedOrders, fetchMachineParameters, fetchOrderResults, saveOrderResults, updateApprovedOrder, type MachineParameterRecord } from "../services/pmoApi";
 
 type ChecklistRow = {
+  parameterId: number;
   item: string;
   action: string;
   standard: string;
@@ -45,50 +46,18 @@ const monthNames = [
 ];
 
 type StatusFilter = "All" | "In Progress" | "Approval" | "Completed";
-
-const defaultChecklist: ChecklistSection = {
-  mechanical: [
-    {
-      item: "Bearing inspection",
-      action: "Check for wear and noise",
-      standard: "No abnormal sound or vibration",
-      result: "Pass",
-      justification: "Within acceptable tolerance",
-    },
-    {
-      item: "Lubrication",
-      action: "Inspect grease and oil level",
-      standard: "Oil level within minimum range",
-      result: "Pass",
-      justification: "Lubrication verified",
-    },
-  ],
-  electrical: [
-    {
-      item: "Motor insulation",
-      action: "Measure insulation resistance",
-      standard: "Above 1 MΩ",
-      result: "Pass",
-      justification: "Insulation within specification",
-    },
-    {
-      item: "Control panel",
-      action: "Inspect wiring and terminals",
-      standard: "No loose connection detected",
-      result: "Needs attention",
-      justification: "Tightening required on one terminal",
-    },
-  ],
-  utilities: [
-    {
-      item: "Water flow",
-      action: "Check flow and pressure",
-      standard: "Flow stable and no leak",
-      result: "Pass",
-      justification: "Flow within normal operating range",
-    },
-  ],
-};
+type OrderSortColumn =
+  | "asset"
+  | "name"
+  | "location"
+  | "department"
+  | "sub"
+  | "type"
+  | "week"
+  | "date"
+  | "technician"
+  | "status";
+type OrderSortDirection = "asc" | "desc";
 
 const emptyApproval = {
   technicianName: "",
@@ -102,11 +71,18 @@ const emptyApproval = {
 export default function PreventiveMaintenanceOrder() {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<MaintenanceOrder | null>(null);
-  const [technicians, setTechnicians] = useState<string[]>(["John Smith"]);
+  const [technicians, setTechnicians] = useState<string[]>([""]);
   const [selectedYear, setSelectedYear] = useState<number | "All">("All");
   const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
+  const [subFilter, setSubFilter] = useState<string>("All");
+  const [departmentFilter, setDepartmentFilter] = useState<string>("All");
+  const [typeFilter, setTypeFilter] = useState<string>("All");
+  const [weekFilter, setWeekFilter] = useState<number | "All">("All");
   const [searchQuery, setSearchQuery] = useState("");
+  const [orderSortColumn, setOrderSortColumn] = useState<OrderSortColumn>("asset");
+  const [orderSortDirection, setOrderSortDirection] = useState<OrderSortDirection>("asc");
+  const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     machineId: "",
     machineName: "",
@@ -114,11 +90,12 @@ export default function PreventiveMaintenanceOrder() {
     preventiveTimeStart: "08:00",
     preventiveTimeEnd: "10:00",
     department: "",
-    checklist: defaultChecklist,
+    checklist: { mechanical: [], electrical: [], utilities: [] } as ChecklistSection,
     approvals: emptyApproval,
   });
 
   const [maintenanceOrders, setMaintenanceOrders] = useState<MaintenanceOrder[]>([]);
+  const [machineParameters, setMachineParameters] = useState<MachineParameterRecord[]>([]);
 
   useEffect(() => {
     const loadApprovedOrders = async () => {
@@ -128,11 +105,12 @@ export default function PreventiveMaintenanceOrder() {
           id: String(row.id),
           machineId: row.machine_asset || String(row.machine_no),
           machineAsset: row.machine_asset,
+          machineNo: row.machine_no,
           machineName: row.machine_name,
           location: row.location,
           department: row.department || "Unassigned",
           sub: row.sub,
-          preventiveDate: row.preventive_date || row.execution_date || "",
+          preventiveDate: row.preventive_date || "",
           status: row.status,
           technician: row.technician_name || "Planner",
           year: row.year,
@@ -149,14 +127,57 @@ export default function PreventiveMaintenanceOrder() {
     };
 
     void loadApprovedOrders();
+
+    const loadMachineParameters = async () => {
+      try {
+        const parameters = await fetchMachineParameters();
+        setMachineParameters(parameters);
+      } catch (error) {
+        console.error("Failed to load machine parameters:", error);
+      }
+    };
+
+    void loadMachineParameters();
   }, []);
+
+  const departmentOptions = useMemo(
+    () => Array.from(new Set(maintenanceOrders.map((order) => order.department).filter(Boolean))).sort(),
+    [maintenanceOrders],
+  );
+
+  const typeOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          maintenanceOrders.flatMap((order) =>
+            String(order.machineType || "").split(",").map((type) => type.trim()).filter(Boolean),
+          ),
+        ),
+      ).sort(),
+    [maintenanceOrders],
+  );
+
+  const handleOrderSort = (column: OrderSortColumn) => {
+    if (orderSortColumn === column) {
+      setOrderSortDirection(orderSortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setOrderSortColumn(column);
+      setOrderSortDirection("asc");
+    }
+  };
 
   const filteredOrders = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return maintenanceOrders.filter((order) => {
+    const filtered = maintenanceOrders.filter((order) => {
       const matchesYear = selectedYear === "All" || order.year === selectedYear;
       const matchesMonth = selectedMonth === "All" || order.month === selectedMonth;
       const matchesStatus = statusFilter === "All" || order.status === statusFilter;
+      const matchesSub = subFilter === "All" || order.sub === subFilter;
+      const matchesDepartment = departmentFilter === "All" || order.department === departmentFilter;
+      const matchesType =
+        typeFilter === "All" ||
+        String(order.machineType || "").split(",").map((type) => type.trim()).includes(typeFilter);
+      const matchesWeek = weekFilter === "All" || order.week === weekFilter;
       const matchesSearch =
         !query ||
         order.machineName.toLowerCase().includes(query) ||
@@ -165,12 +186,86 @@ export default function PreventiveMaintenanceOrder() {
         order.id.toLowerCase().includes(query) ||
         order.sub.toLowerCase().includes(query);
 
-      return matchesYear && matchesMonth && matchesStatus && matchesSearch;
+      return matchesYear && matchesMonth && matchesStatus && matchesSub && matchesDepartment && matchesType && matchesWeek && matchesSearch;
     });
-  }, [maintenanceOrders, searchQuery, selectedMonth, selectedYear, statusFilter]);
 
-  const openForm = (order: MaintenanceOrder) => {
+    return [...filtered].sort((a, b) => {
+      let aVal: string | number = "";
+      let bVal: string | number = "";
+      switch (orderSortColumn) {
+        case "asset": aVal = a.machineAsset || a.machineId; bVal = b.machineAsset || b.machineId; break;
+        case "name": aVal = a.machineName; bVal = b.machineName; break;
+        case "location": aVal = a.location || ""; bVal = b.location || ""; break;
+        case "department": aVal = a.department; bVal = b.department; break;
+        case "sub": aVal = a.sub; bVal = b.sub; break;
+        case "type": aVal = a.machineType || ""; bVal = b.machineType || ""; break;
+        case "week": aVal = a.week ?? 0; bVal = b.week ?? 0; break;
+        case "date": aVal = a.preventiveDate || ""; bVal = b.preventiveDate || ""; break;
+        case "technician": aVal = a.technician; bVal = b.technician; break;
+        case "status": aVal = a.status; bVal = b.status; break;
+      }
+      const comparison =
+        typeof aVal === "number" && typeof bVal === "number"
+          ? aVal - bVal
+          : String(aVal).localeCompare(String(bVal));
+      return orderSortDirection === "asc" ? comparison : -comparison;
+    });
+  }, [maintenanceOrders, searchQuery, selectedMonth, selectedYear, statusFilter, subFilter, departmentFilter, typeFilter, weekFilter, orderSortColumn, orderSortDirection]);
+
+  const openForm = async (order: MaintenanceOrder) => {
     setSelectedOrder(order);
+    const orderId = Number(order.id);
+
+    const checklist: ChecklistSection = { mechanical: [], electrical: [], utilities: [] };
+
+    try {
+      // Seeds result rows from the machine template if missing, then returns them
+      const results = await fetchOrderResults(orderId);
+      for (const row of results) {
+        const checklistRow: ChecklistRow = {
+          parameterId: row.parameter_id,
+          item: row.part_checklist || "",
+          action: row.action || "",
+          standard: row.standard || "",
+          result: row.result || "",
+          justification: row.justification || "NA",
+        };
+        const partMaster = String(row.part_master || "").toLowerCase();
+        if (partMaster.includes("electric") || partMaster.includes("wind") || partMaster.includes("listrik") || partMaster.includes("angin")) {
+          checklist.electrical.push(checklistRow);
+        } else if (partMaster.includes("mechanic") || partMaster.includes("mekanik")) {
+          checklist.mechanical.push(checklistRow);
+        } else {
+          checklist.utilities.push(checklistRow);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load order results, falling back to machine template:", error);
+      const machineNo = order.machineNo ?? 0;
+      const parameters = machineParameters
+        .filter((parameter) => parameter.machine_no === machineNo)
+        .sort((a, b) => a.sort_order - b.sort_order || a.id - b.id);
+
+      for (const parameter of parameters) {
+        const checklistRow: ChecklistRow = {
+          parameterId: parameter.id,
+          item: parameter.part_checklist,
+          action: parameter.action || "",
+          standard: parameter.standard || "",
+          result: "",
+          justification: "NA",
+        };
+        const partMaster = parameter.part_master.toLowerCase();
+        if (partMaster.includes("electric") || partMaster.includes("wind") || partMaster.includes("listrik") || partMaster.includes("angin")) {
+          checklist.electrical.push(checklistRow);
+        } else if (partMaster.includes("mechanic") || partMaster.includes("mekanik")) {
+          checklist.mechanical.push(checklistRow);
+        } else {
+          checklist.utilities.push(checklistRow);
+        }
+      }
+    }
+
     setFormData({
       machineId: order.id,
       machineName: order.machineName,
@@ -178,12 +273,12 @@ export default function PreventiveMaintenanceOrder() {
       preventiveTimeStart: "08:00",
       preventiveTimeEnd: "11:00",
       department: order.department,
-      checklist: defaultChecklist,
+      checklist,
       approvals: {
         technicianName: order.technician,
         userName: "",
         engineeringSupervisorName: "",
-        technicianDateTime: "2026-08-15T08:30",
+        technicianDateTime: "",
         userDateTime: "",
         engineeringSupervisorDateTime: "",
       },
@@ -240,6 +335,64 @@ export default function PreventiveMaintenanceOrder() {
     }));
   };
 
+  const handleSaveRecord = async () => {
+    if (!selectedOrder) return;
+    const orderId = Number(selectedOrder.id);
+    if (Number.isNaN(orderId)) {
+      closeForm();
+      return;
+    }
+
+    const techniciansText = technicians.map((name) => name.trim()).filter(Boolean).join(", ");
+    setIsSaving(true);
+    try {
+      const resultItems = (Object.values(formData.checklist) as ChecklistRow[][])
+        .flat()
+        .map((row) => ({
+          parameter_id: row.parameterId,
+          result: row.result.trim() || null,
+          justification: row.justification.trim() || "NA",
+        }));
+
+      await updateApprovedOrder(orderId, {
+        preventive_date: formData.preventiveDate || null,
+        start_clock: formData.preventiveTimeStart ? `${formData.preventiveTimeStart}:00` : null,
+        end_clock: formData.preventiveTimeEnd ? `${formData.preventiveTimeEnd}:00` : null,
+        technician_name: techniciansText || null,
+        status: "Approval",
+      });
+
+      await saveOrderResults(orderId, resultItems);
+
+      setMaintenanceOrders((prev) =>
+        prev.map((order) =>
+          order.id === selectedOrder.id
+            ? {
+                ...order,
+                preventiveDate: formData.preventiveDate,
+                technician: techniciansText || order.technician,
+                status: "Approval",
+              }
+            : order,
+        ),
+      );
+      closeForm();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to save preventive order.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const renderOrderHeader = (column: OrderSortColumn, label: string) => (
+    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
+      <button onClick={() => handleOrderSort(column)} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+        <span>{label}</span>
+        <span className="ml-1 text-xs">{orderSortColumn === column && (orderSortDirection === "asc" ? "↑" : "↓")}</span>
+      </button>
+    </TableCell>
+  );
+
   return (
     <>
       <PageMeta
@@ -250,7 +403,7 @@ export default function PreventiveMaintenanceOrder() {
 
       <div className="space-y-6">
         <ComponentCard title="Preventive Schedule Filters">
-          <div className="grid gap-4 md:grid-cols-5">
+          <div className="grid gap-4 md:grid-cols-4">
             <label className="text-sm text-gray-700 dark:text-gray-300">
               <span className="mb-2 block">Year</span>
               <select
@@ -288,6 +441,68 @@ export default function PreventiveMaintenanceOrder() {
             </label>
 
             <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Sub</span>
+              <select
+                value={subFilter}
+                onChange={(e) => setSubFilter(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="All">All Subs</option>
+                <option value="MTC">MTC</option>
+                <option value="UTY">UTY</option>
+                <option value="BLD">BLD</option>
+              </select>
+            </label>
+
+            <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Department</span>
+              <select
+                value={departmentFilter}
+                onChange={(e) => setDepartmentFilter(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="All">All Departments</option>
+                {departmentOptions.map((department) => (
+                  <option key={department} value={department}>
+                    {department}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Preventive Type</span>
+              <select
+                value={typeFilter}
+                onChange={(e) => setTypeFilter(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="All">All Types</option>
+                {typeOptions.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Week</span>
+              <select
+                value={weekFilter}
+                onChange={(e) => setWeekFilter(e.target.value === "All" ? "All" : Number(e.target.value))}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="All">All Weeks</option>
+                {[1, 2, 3, 4, 5].map((week) => (
+                  <option key={week} value={week}>
+                    Week {week}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="text-sm text-gray-700 dark:text-gray-300">
               <span className="mb-2 block">Status</span>
               <select
                 value={statusFilter}
@@ -301,12 +516,12 @@ export default function PreventiveMaintenanceOrder() {
               </select>
             </label>
 
-            <label className="text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
-              <span className="mb-2 block">Search Machine / ID / Department</span>
+            <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Search Machine / ID</span>
               <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search machine or department"
+                placeholder="Search machine or ID"
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               />
             </label>
@@ -325,36 +540,16 @@ export default function PreventiveMaintenanceOrder() {
               <Table>
                 <TableHeader className="border-b border-gray-100 dark:border-white/[0.05]">
                   <TableRow>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Machine Asset (ID)
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Machine Name
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Location
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Department
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Sub
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Type
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Week
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Preventive Date
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Technician
-                    </TableCell>
-                    <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
-                      Status
-                    </TableCell>
+                    {renderOrderHeader("asset", "Machine Asset (ID)")}
+                    {renderOrderHeader("name", "Machine Name")}
+                    {renderOrderHeader("location", "Location")}
+                    {renderOrderHeader("department", "Department")}
+                    {renderOrderHeader("sub", "Sub")}
+                    {renderOrderHeader("type", "Type")}
+                    {renderOrderHeader("week", "Week")}
+                    {renderOrderHeader("date", "Preventive Date")}
+                    {renderOrderHeader("technician", "Technician")}
+                    {renderOrderHeader("status", "Status")}
                     <TableCell isHeader className="px-5 py-3 text-start text-theme-xs font-medium text-gray-500 dark:text-gray-400">
                       Action
                     </TableCell>
@@ -386,7 +581,7 @@ export default function PreventiveMaintenanceOrder() {
                         {order.week ? `Week ${order.week}` : "-"}
                       </TableCell>
                       <TableCell className="px-5 py-4 text-start text-theme-sm text-gray-600 dark:text-gray-300">
-                        {order.preventiveDate}
+                        {order.preventiveDate || "-"}
                       </TableCell>
                       <TableCell className="px-5 py-4 text-start text-theme-sm text-gray-600 dark:text-gray-300">
                         {order.technician}
@@ -409,7 +604,7 @@ export default function PreventiveMaintenanceOrder() {
                         <Button
                           size="sm"
                           variant="primary"
-                          onClick={() => openForm(order)}
+                          onClick={() => void openForm(order)}
                           className="bg-brand-500 hover:bg-brand-600"
                         >
                           Open Form
@@ -708,7 +903,9 @@ export default function PreventiveMaintenanceOrder() {
             <Button variant="outline" onClick={closeForm}>
               Close
             </Button>
-            <Button onClick={closeForm}>Save Record</Button>
+            <Button onClick={() => void handleSaveRecord()} disabled={isSaving}>
+              {isSaving ? "Saving..." : "Save Record"}
+            </Button>
           </div>
         </div>
       </Modal>

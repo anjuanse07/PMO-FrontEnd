@@ -48,6 +48,7 @@ const yearOptions = [2025, 2026, 2027];
 
 type SortColumn = "machine" | "asset" | "location";
 type SortDirection = "asc" | "desc";
+type ScheduledSortColumn = "asset" | "sub" | "month" | "week" | "type" | "status";
 
 export default function YearlyPreventiveSchedule() {
   const [selectedSub, setSelectedSub] = useState<MachineSub>("UTY");
@@ -75,7 +76,18 @@ export default function YearlyPreventiveSchedule() {
   >("All");
   const [scheduledSearchText, setScheduledSearchText] = useState("");
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
+  const [scheduledSortColumn, setScheduledSortColumn] = useState<ScheduledSortColumn>("asset");
+  const [scheduledSortDirection, setScheduledSortDirection] = useState<SortDirection>("asc");
   const currentUser = getCurrentUser();
+
+  const handleScheduledSort = (column: ScheduledSortColumn) => {
+    if (scheduledSortColumn === column) {
+      setScheduledSortDirection(scheduledSortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setScheduledSortColumn(column);
+      setScheduledSortDirection("asc");
+    }
+  };
 
   useEffect(() => {
     const loadMachines = async () => {
@@ -152,6 +164,24 @@ export default function YearlyPreventiveSchedule() {
     }));
   }, [machineRecords, selectedSub]);
 
+  // The preventive_types table stores codes in `parameter` and full names in `abbreviation`
+  const typeLabelByCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const type of preventiveTypes) {
+      map.set(type.parameter, type.abbreviation);
+    }
+    return map;
+  }, [preventiveTypes]);
+
+  const displayPlans = useMemo(
+    () =>
+      plans.map((plan) => ({
+        ...plan,
+        preventiveTypes: plan.preventiveTypes.map((type) => typeLabelByCode.get(type) ?? type),
+      })),
+    [plans, typeLabelByCode],
+  );
+
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -197,8 +227,8 @@ export default function YearlyPreventiveSchedule() {
   }, [normalizedMachinesForSub, searchText, sortColumn, sortDirection]);
 
   const scheduleForSelectedYear = useMemo(
-    () => plans.filter((plan) => plan.year === selectedYear && plan.sub === selectedSub),
-    [plans, selectedYear, selectedSub],
+    () => displayPlans.filter((plan) => plan.year === selectedYear && plan.sub === selectedSub),
+    [displayPlans, selectedYear, selectedSub],
   );
 
   const toggleType = (machineId: string, type: PreventiveType) => {
@@ -304,6 +334,8 @@ export default function YearlyPreventiveSchedule() {
       const chosen = selectedTypes[machine.machineId] ?? [];
       if (!chosen.length) continue;
 
+      const chosenNames = chosen.map((type) => typeLabelByCode.get(type) ?? type);
+
       const scheduledDate = new Date(selectedYear, selectedMonth, (selectedWeek - 1) * 7 + 1)
         .toISOString()
         .slice(0, 10);
@@ -322,7 +354,7 @@ export default function YearlyPreventiveSchedule() {
           bulan: selectedMonth,
           minggu: selectedWeek,
           tanggal_jadwal: scheduledDate,
-          preventive_types: chosen.join(","),
+          preventive_types: chosenNames.join(","),
           draft_date: new Date().toISOString(),
           status: "Draft",
           current_role: currentUser?.role,
@@ -338,7 +370,7 @@ export default function YearlyPreventiveSchedule() {
           month: selectedMonth,
           week: selectedWeek,
           scheduledDate,
-          preventiveTypes: chosen,
+          preventiveTypes: chosenNames,
           status: "Draft",
         };
 
@@ -462,8 +494,8 @@ export default function YearlyPreventiveSchedule() {
         month: entry.month,
         week: entry.week,
         preventive_types: entry.preventiveTypes.join(","),
-        preventive_date: entry.scheduledDate,
-        execution_date: entry.scheduledDate,
+        preventive_date: null,
+        execution_date: null,
         start_clock: "08:00:00",
         end_clock: "10:00:00",
         technician_name: "Planner",
@@ -489,14 +521,14 @@ export default function YearlyPreventiveSchedule() {
   };
 
   const enrichedPlansWithAsset = useMemo(() => {
-    return plans.map((plan) => {
+    return displayPlans.map((plan) => {
       const machine = machineRecords.find((m) => String(m.no) === plan.machineId);
       return {
         ...plan,
         assetNumber: machine?.kode_mesin || plan.machineId,
       };
     });
-  }, [plans, machineRecords]);
+  }, [displayPlans, machineRecords]);
 
   const filteredScheduledEntries = useMemo(() => {
     let filtered = enrichedPlansWithAsset.filter((plan) => plan.year === selectedYear);
@@ -532,8 +564,26 @@ export default function YearlyPreventiveSchedule() {
       );
     }
 
-    return filtered;
-  }, [enrichedPlansWithAsset, selectedYear, scheduledSubFilter, scheduledMonthFilter, scheduledWeekFilter, scheduledTypeFilter, scheduledStatusFilter, scheduledSearchText]);
+    const sorted = [...filtered].sort((a, b) => {
+      let comparison = 0;
+      if (scheduledSortColumn === "asset") {
+        comparison = String((a as any).assetNumber || a.machineId).localeCompare(String((b as any).assetNumber || b.machineId));
+      } else if (scheduledSortColumn === "sub") {
+        comparison = a.sub.localeCompare(b.sub);
+      } else if (scheduledSortColumn === "month") {
+        comparison = a.month - b.month;
+      } else if (scheduledSortColumn === "week") {
+        comparison = a.week - b.week;
+      } else if (scheduledSortColumn === "type") {
+        comparison = a.preventiveTypes.join(",").localeCompare(b.preventiveTypes.join(","));
+      } else if (scheduledSortColumn === "status") {
+        comparison = a.status.localeCompare(b.status);
+      }
+      return scheduledSortDirection === "asc" ? comparison : -comparison;
+    });
+
+    return sorted;
+  }, [enrichedPlansWithAsset, selectedYear, scheduledSubFilter, scheduledMonthFilter, scheduledWeekFilter, scheduledTypeFilter, scheduledStatusFilter, scheduledSearchText, scheduledSortColumn, scheduledSortDirection]);
 
   const toggleSelectEntry = (entryId: string) => {
     const updated = new Set(selectedEntryIds);
@@ -983,12 +1033,42 @@ export default function YearlyPreventiveSchedule() {
                         className="rounded border-gray-300"
                       />
                     </th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Machine Asset (ID)</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Sub</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Month</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Week</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Type</th>
-                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Status</th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">
+                      <button onClick={() => handleScheduledSort("asset")} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+                        <span>Machine Asset (ID)</span>
+                        <span className="ml-1 text-xs">{scheduledSortColumn === "asset" && (scheduledSortDirection === "asc" ? "↑" : "↓")}</span>
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">
+                      <button onClick={() => handleScheduledSort("sub")} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+                        <span>Sub</span>
+                        <span className="ml-1 text-xs">{scheduledSortColumn === "sub" && (scheduledSortDirection === "asc" ? "↑" : "↓")}</span>
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">
+                      <button onClick={() => handleScheduledSort("month")} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+                        <span>Month</span>
+                        <span className="ml-1 text-xs">{scheduledSortColumn === "month" && (scheduledSortDirection === "asc" ? "↑" : "↓")}</span>
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">
+                      <button onClick={() => handleScheduledSort("week")} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+                        <span>Week</span>
+                        <span className="ml-1 text-xs">{scheduledSortColumn === "week" && (scheduledSortDirection === "asc" ? "↑" : "↓")}</span>
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">
+                      <button onClick={() => handleScheduledSort("type")} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+                        <span>Type</span>
+                        <span className="ml-1 text-xs">{scheduledSortColumn === "type" && (scheduledSortDirection === "asc" ? "↑" : "↓")}</span>
+                      </button>
+                    </th>
+                    <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">
+                      <button onClick={() => handleScheduledSort("status")} className="flex cursor-pointer items-center gap-2 uppercase hover:text-brand-600">
+                        <span>Status</span>
+                        <span className="ml-1 text-xs">{scheduledSortColumn === "status" && (scheduledSortDirection === "asc" ? "↑" : "↓")}</span>
+                      </button>
+                    </th>
                     <th className="px-4 py-3 text-xs font-semibold uppercase text-gray-600 dark:text-gray-300">Action</th>
                   </tr>
                 </thead>

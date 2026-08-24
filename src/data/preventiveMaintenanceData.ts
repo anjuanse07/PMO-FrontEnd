@@ -6,6 +6,7 @@ export type MaintenanceOrder = {
   id: string;
   machineId: string;
   machineAsset?: string;
+  machineNo?: number;
   machineName: string;
   location?: string | null;
   department: string;

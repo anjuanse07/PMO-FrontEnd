@@ -64,6 +64,123 @@ export type ApprovedOrderRecord = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:5000";
 
+export type OrderResultRecord = {
+  id: number;
+  order_id: number;
+  parameter_id: number;
+  result: string | null;
+  justification: string | null;
+  part_master: string | null;
+  part_checklist: string | null;
+  action: string | null;
+  standard: string | null;
+  sort_order: number;
+};
+
+export async function fetchOrderResults(orderId: number): Promise<OrderResultRecord[]> {
+  const response = await fetch(`${API_BASE}/api/approved-orders/${orderId}/results`);
+  if (!response.ok) throw new Error("Failed to fetch order results");
+  return response.json();
+}
+
+export async function saveOrderResults(
+  orderId: number,
+  items: Array<{ parameter_id: number; result: string | null; justification?: string | null }>,
+) {
+  const response = await fetch(`${API_BASE}/api/approved-orders/${orderId}/results`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.details || errorBody?.message || "Failed to save order results");
+  }
+  return response.json();
+}
+
+export type MachineParameterRecord = {
+  id: number;
+  machine_no: number;
+  part_master: string;
+  part_checklist: string;
+  action: string | null;
+  standard: string | null;
+  sort_order: number;
+  machine_name?: string;
+  machine_asset?: string;
+};
+
+export async function fetchMachineParameters(): Promise<MachineParameterRecord[]> {
+  const response = await fetch(`${API_BASE}/api/machine-parameters`);
+  if (!response.ok) throw new Error("Failed to fetch machine parameters");
+  return response.json();
+}
+
+export async function createMachineParameter(payload: {
+  machine_no: number;
+  part_master: string;
+  part_checklist: string;
+  action?: string | null;
+  standard?: string | null;
+  sort_order?: number;
+}) {
+  const response = await fetch(`${API_BASE}/api/machine-parameters`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to create machine parameter");
+  }
+  return response.json();
+}
+
+export async function bulkCreateMachineParameters(
+  items: Array<{
+    machine_no: number;
+    part_master: string;
+    part_checklist: string;
+    action?: string | null;
+    standard?: string | null;
+    sort_order?: number;
+  }>,
+) {
+  const response = await fetch(`${API_BASE}/api/machine-parameters/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to import machine parameters");
+  }
+  return response.json();
+}
+
+export async function updateMachineParameter(
+  id: number,
+  payload: Partial<{ part_master: string; part_checklist: string; action: string | null; standard: string | null; sort_order: number }>,
+) {
+  const response = await fetch(`${API_BASE}/api/machine-parameters/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to update machine parameter");
+  }
+  return response.json();
+}
+
+export async function deleteMachineParameter(id: number) {
+  const response = await fetch(`${API_BASE}/api/machine-parameters/${id}`, { method: "DELETE" });
+  if (!response.ok) throw new Error("Failed to delete machine parameter");
+  return response.json();
+}
+
 export async function fetchMachines(): Promise<MachineRecord[]> {
   const response = await fetch(`${API_BASE}/api/machines`);
   if (!response.ok) {
@@ -170,6 +287,24 @@ export async function createApprovedOrder(payload: Omit<ApprovedOrderRecord, "id
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);
     throw new Error(errorBody?.details || errorBody?.message || "Failed to save approved order");
+  }
+
+  return response.json();
+}
+
+export async function updateApprovedOrder(
+  id: number,
+  payload: Partial<Pick<ApprovedOrderRecord, "preventive_date" | "execution_date" | "start_clock" | "end_clock" | "technician_name" | "status">>,
+) {
+  const response = await fetch(`${API_BASE}/api/approved-orders/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.details || errorBody?.message || "Failed to update approved order");
   }
 
   return response.json();

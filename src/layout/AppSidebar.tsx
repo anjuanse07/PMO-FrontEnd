@@ -43,6 +43,11 @@ const navItems: NavItem[] = [
     path: "/PreventiveMaintenanceOrder",
   },
   {
+    icon: <ListIcon />,
+    name: "Machine Parameters",
+    path: "/machine-parameters",
+  },
+  {
     icon: <CalenderIcon />,
     name: "Calendar",
     path: "/calendar",

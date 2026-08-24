@@ -14,6 +14,7 @@ import BarChart from "./pages/Charts/BarChart";
 import Calendar from "./pages/Calendar";
 import OrderIcon from "./pages/PreventiveMaintenanceOrder";
 import YearlyPreventiveSchedule from "./pages/YearlyPreventiveSchedule";
+import MachineParameters from "./pages/MachineParameters";
 import BasicTables from "./pages/Tables/BasicTables";
 import FormElements from "./pages/Forms/FormElements";
 import Blank from "./pages/Blank";
@@ -40,6 +41,7 @@ export default function App() {
             {/* Others Page */}
             <Route path="/profile" element={<UserProfiles />} />
             <Route path="/PreventiveMaintenanceOrder" element={<OrderIcon />} />
+            <Route path="/machine-parameters" element={<MachineParameters />} />
             <Route path="/yearly-preventive-schedule" element={<YearlyPreventiveSchedule />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/blank" element={<Blank />} />
