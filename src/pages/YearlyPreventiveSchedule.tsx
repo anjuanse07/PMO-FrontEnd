@@ -62,6 +62,8 @@ export default function YearlyPreventiveSchedule() {
   const [sortColumn, setSortColumn] = useState<SortColumn>("machine");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchText, setSearchText] = useState("");
+  const [currentMachinesPage, setCurrentMachinesPage] = useState(1);
+  const MACHINES_PAGE_SIZE = 15;
   const [preventiveTypes, setPreventiveTypes] = useState<
     Array<{ id: number; abbreviation: string; parameter: string }>
   >([]);
@@ -75,6 +77,7 @@ export default function YearlyPreventiveSchedule() {
     "Draft" | "Approved by Engineering" | "Approved by Manager" | "All"
   >("All");
   const [scheduledSearchText, setScheduledSearchText] = useState("");
+  const [showApprovedByManager, setShowApprovedByManager] = useState(true);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [scheduledSortColumn, setScheduledSortColumn] = useState<ScheduledSortColumn>("asset");
   const [scheduledSortDirection, setScheduledSortDirection] = useState<SortDirection>("asc");
@@ -225,6 +228,22 @@ export default function YearlyPreventiveSchedule() {
 
     return sorted;
   }, [normalizedMachinesForSub, searchText, sortColumn, sortDirection]);
+
+  // Reset to page 1 whenever the filtered/sorted machine list changes underneath the table
+  useEffect(() => {
+    setCurrentMachinesPage(1);
+  }, [selectedSub, searchText, sortColumn, sortDirection]);
+
+  const machinesPageCount = Math.max(1, Math.ceil(machinesForSub.length / MACHINES_PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentMachinesPage((page) => Math.min(page, machinesPageCount));
+  }, [machinesPageCount]);
+
+  const paginatedMachinesForSub = useMemo(() => {
+    const start = (currentMachinesPage - 1) * MACHINES_PAGE_SIZE;
+    return machinesForSub.slice(start, start + MACHINES_PAGE_SIZE);
+  }, [machinesForSub, currentMachinesPage]);
 
   const scheduleForSelectedYear = useMemo(
     () => displayPlans.filter((plan) => plan.year === selectedYear && plan.sub === selectedSub),
@@ -400,6 +419,12 @@ export default function YearlyPreventiveSchedule() {
   };
 
   const removeScheduledPlan = async (entryId: string) => {
+    const targetPlan = plans.find((plan) => plan.id === entryId);
+    if (targetPlan?.status === "Approved by Manager") {
+      alert("This entry has already been approved by the manager and can no longer be deleted.");
+      return;
+    }
+
     try {
       const numericId = Number(entryId);
       if (!Number.isNaN(numericId)) {
@@ -417,6 +442,10 @@ export default function YearlyPreventiveSchedule() {
   const approveEngineering = async (entry: PlannedPreventive) => {
     if (!canApproveEngineering(currentUser)) {
       alert("Only an engineering supervisor or engineering officer can approve engineering review.");
+      return;
+    }
+    if (entry.status !== "Draft") {
+      alert("Only entries still in Draft status can receive engineering approval.");
       return;
     }
 
@@ -553,6 +582,10 @@ export default function YearlyPreventiveSchedule() {
       filtered = filtered.filter((plan) => plan.status === scheduledStatusFilter);
     }
 
+    if (!showApprovedByManager) {
+      filtered = filtered.filter((plan) => plan.status !== "Approved by Manager");
+    }
+
     if (scheduledSearchText.trim()) {
       const searchLower = scheduledSearchText.toLowerCase();
       filtered = filtered.filter(
@@ -583,9 +616,33 @@ export default function YearlyPreventiveSchedule() {
     });
 
     return sorted;
-  }, [enrichedPlansWithAsset, selectedYear, scheduledSubFilter, scheduledMonthFilter, scheduledWeekFilter, scheduledTypeFilter, scheduledStatusFilter, scheduledSearchText, scheduledSortColumn, scheduledSortDirection]);
+  }, [
+    enrichedPlansWithAsset,
+    selectedYear,
+    scheduledSubFilter,
+    scheduledMonthFilter,
+    scheduledWeekFilter,
+    scheduledTypeFilter,
+    scheduledStatusFilter,
+    showApprovedByManager,
+    scheduledSearchText,
+    scheduledSortColumn,
+    scheduledSortDirection,
+  ]);
+
+  // Entries locked because a manager has already approved them - excluded from bulk selection entirely
+  const selectableScheduledEntries = useMemo(
+    () => filteredScheduledEntries.filter((entry) => entry.status !== "Approved by Manager"),
+    [filteredScheduledEntries],
+  );
 
   const toggleSelectEntry = (entryId: string) => {
+    const targetPlan = plans.find((plan) => plan.id === entryId);
+    if (targetPlan?.status === "Approved by Manager") {
+      // Locked - already approved by manager, cannot be selected for bulk actions
+      return;
+    }
+
     const updated = new Set(selectedEntryIds);
     if (updated.has(entryId)) {
       updated.delete(entryId);
@@ -596,27 +653,39 @@ export default function YearlyPreventiveSchedule() {
   };
 
   const toggleSelectAllFilteredEntries = () => {
-    if (selectedEntryIds.size === filteredScheduledEntries.length) {
+    if (selectedEntryIds.size === selectableScheduledEntries.length && selectableScheduledEntries.length > 0) {
       setSelectedEntryIds(new Set());
     } else {
-      setSelectedEntryIds(new Set(filteredScheduledEntries.map((e) => e.id)));
+      setSelectedEntryIds(new Set(selectableScheduledEntries.map((e) => e.id)));
     }
   };
 
   const allFilteredEntriesSelected = useMemo(
-    () => filteredScheduledEntries.length > 0 && selectedEntryIds.size === filteredScheduledEntries.length,
-    [filteredScheduledEntries, selectedEntryIds],
+    () => selectableScheduledEntries.length > 0 && selectedEntryIds.size === selectableScheduledEntries.length,
+    [selectableScheduledEntries, selectedEntryIds],
   );
 
   const bulkApproveEntries = async () => {
-    const selectedPlans = plans.filter((plan) => selectedEntryIds.has(plan.id));
+    // Bulk approval only ever applies to entries still in Draft or Approved by Engineering status;
+    // anything already Approved by Manager is excluded upstream via selectableScheduledEntries.
+    const selectedPlans = plans.filter(
+      (plan) => selectedEntryIds.has(plan.id) && plan.status !== "Approved by Manager",
+    );
 
     if (canApproveEngineering(currentUser)) {
-      for (const plan of selectedPlans.filter((item) => item.status === "Draft")) {
+      const eligible = selectedPlans.filter((item) => item.status === "Draft");
+      if (!eligible.length) {
+        alert("No selected entries are eligible for engineering approval (must be in Draft status).");
+      }
+      for (const plan of eligible) {
         await approveEngineering(plan);
       }
     } else if (isManager(currentUser)) {
-      for (const plan of selectedPlans.filter((item) => item.status === "Approved by Engineering")) {
+      const eligible = selectedPlans.filter((item) => item.status === "Approved by Engineering");
+      if (!eligible.length) {
+        alert("No selected entries are eligible for manager approval (must be Approved by Engineering).");
+      }
+      for (const plan of eligible) {
         await approveForPmo(plan);
       }
     } else {
@@ -627,8 +696,12 @@ export default function YearlyPreventiveSchedule() {
   };
 
   const bulkDeleteEntries = async () => {
-    const idsToDelete = Array.from(selectedEntryIds);
-    
+    // Bulk delete can never remove an entry that's already been approved by the manager
+    const idsToDelete = Array.from(selectedEntryIds).filter((id) => {
+      const plan = plans.find((p) => p.id === id);
+      return plan && plan.status !== "Approved by Manager";
+    });
+
     for (const id of idsToDelete) {
       try {
         const numericId = Number(id);
@@ -734,20 +807,33 @@ export default function YearlyPreventiveSchedule() {
               />
             </div>
 
-            {isLoadingMachines && (
-              <div className="mb-3 text-sm text-gray-500 dark:text-gray-400">
-                Loading machine list from backend...
+            {isLoadingMachines ? (
+              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+                <div className="animate-pulse divide-y divide-gray-100 dark:divide-white/[0.05]">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-4 px-4 py-3">
+                      <div className="h-4 w-32 rounded bg-gray-200 dark:bg-gray-700" />
+                      <div className="h-4 w-20 rounded bg-gray-200 dark:bg-gray-700" />
+                      <div className="h-4 w-24 rounded bg-gray-200 dark:bg-gray-700" />
+                      <div className="ml-auto flex gap-2">
+                        {Array.from({ length: 5 }).map((__, j) => (
+                          <div key={j} className="h-4 w-4 rounded bg-gray-200 dark:bg-gray-700" />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-            )}
-
-            <div
-              className="overflow-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
-              style={{ maxHeight: "460px" }}
-            >
+            ) : (
+              <>
+                <div
+                  className="overflow-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
+                  style={{ maxHeight: "460px" }}
+                >
               <table className="min-w-full border-separate border-spacing-0 text-left">
                 <thead className="bg-gray-50 dark:bg-gray-800/60">
                   <tr>
-                    <th className="sticky left-0 z-10 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
+                    <th className="sticky left-0 top-0 z-30 w-48 min-w-[12rem] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
                       <button
                         onClick={() => handleSort("machine")}
                         className="flex cursor-pointer items-center gap-2 hover:text-brand-600"
@@ -766,7 +852,7 @@ export default function YearlyPreventiveSchedule() {
                       </button>
                     </th>
                     <>
-                      <th className="border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
+                      <th className="sticky left-48 top-0 z-30 w-24 min-w-[6rem] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
                         <button
                           onClick={() => handleSort("asset")}
                           className="flex cursor-pointer items-center gap-2 hover:text-brand-600"
@@ -777,7 +863,7 @@ export default function YearlyPreventiveSchedule() {
                           </span>
                         </button>
                       </th>
-                      <th className="border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
+                      <th className="sticky top-0 z-20 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
                         <button
                           onClick={() => handleSort("location")}
                           className="flex cursor-pointer items-center gap-2 hover:text-brand-600"
@@ -795,7 +881,7 @@ export default function YearlyPreventiveSchedule() {
                       return (
                         <th
                           key={type}
-                          className="border-b border-r border-gray-200 px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:text-gray-200"
+                          className="sticky top-0 z-20 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200"
                           title={typeData?.parameter}
                         >
                           <div className="mb-1 flex cursor-pointer items-center justify-center">
@@ -819,15 +905,15 @@ export default function YearlyPreventiveSchedule() {
                   </tr>
                 </thead>
                 <tbody>
-                  {machinesForSub.map((machine) => (
+                  {paginatedMachinesForSub.map((machine) => (
                     <tr key={machine.machineId} className="align-middle">
-                      <td className="sticky left-0 z-10 border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                      <td className="sticky left-0 z-10 w-48 min-w-[12rem] border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
                         <div className="font-medium">{machine.machineName}</div>
                         <div className="text-[11px] text-gray-500 dark:text-gray-400">{machine.machineId}</div>
                       </td>
 
                       <>
-                        <td className="border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                        <td className="sticky left-48 z-10 w-24 min-w-[6rem] border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
                           {machine.assetNumber ?? machine.machineId}
                         </td>
                         <td className="border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
@@ -855,7 +941,61 @@ export default function YearlyPreventiveSchedule() {
                   ))}
                 </tbody>
               </table>
-            </div>
+                </div>
+
+                <div className="mt-3 flex flex-col items-center justify-between gap-2 sm:flex-row">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    {machinesForSub.length === 0
+                      ? "No machines found"
+                      : `Showing ${(currentMachinesPage - 1) * MACHINES_PAGE_SIZE + 1}-${Math.min(
+                          currentMachinesPage * MACHINES_PAGE_SIZE,
+                          machinesForSub.length,
+                        )} of ${machinesForSub.length} machines`}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCurrentMachinesPage((page) => Math.max(1, page - 1))}
+                      disabled={currentMachinesPage <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <span className="text-xs text-gray-600 dark:text-gray-300">
+                      Page {currentMachinesPage} of {machinesPageCount}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCurrentMachinesPage((page) => Math.min(machinesPageCount, page + 1))}
+                      disabled={currentMachinesPage >= machinesPageCount}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </ComponentCard>
+
+        <ComponentCard title="Parameter Abbreviation Legend">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+            {preventiveTypes
+              .slice()
+              .sort((a, b) => a.abbreviation.localeCompare(b.abbreviation))
+              .map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-baseline gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm dark:border-white/[0.05] dark:bg-white/[0.02]"
+                >
+                  <span className="shrink-0 font-semibold text-gray-800 dark:text-white">
+                    {t.parameter}
+                  </span>
+                  <span className="text-gray-500 dark:text-gray-400">-</span>
+                  <span className="text-gray-600 dark:text-gray-300">{t.abbreviation}</span>
+                </div>
+              ))}
           </div>
         </ComponentCard>
 
@@ -912,7 +1052,7 @@ export default function YearlyPreventiveSchedule() {
 
         <ComponentCard title="Scheduled Preventive Entries">
           <div className="mb-6 space-y-4">
-            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
+            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-7">
               <label className="text-sm text-gray-700 dark:text-gray-300">
                 <span className="mb-2 block text-xs font-semibold">Group</span>
                 <select
@@ -999,6 +1139,16 @@ export default function YearlyPreventiveSchedule() {
                   className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none placeholder:text-gray-400 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                 />
               </label>
+
+              <label className="flex items-center gap-2 self-end text-sm text-gray-700 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={showApprovedByManager}
+                  onChange={(e) => setShowApprovedByManager(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                />
+                <span className="text-xs font-semibold">Show approved by manager</span>
+              </label>
             </div>
 
             {selectedEntryIds.size > 0 && (
@@ -1080,7 +1230,13 @@ export default function YearlyPreventiveSchedule() {
                           type="checkbox"
                           checked={selectedEntryIds.has(entry.id)}
                           onChange={() => toggleSelectEntry(entry.id)}
-                          className="rounded border-gray-300"
+                          disabled={entry.status === "Approved by Manager"}
+                          title={
+                            entry.status === "Approved by Manager"
+                              ? "Locked - already approved by manager"
+                              : undefined
+                          }
+                          className="rounded border-gray-300 disabled:cursor-not-allowed disabled:opacity-40"
                         />
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
@@ -1118,25 +1274,31 @@ export default function YearlyPreventiveSchedule() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-sm">
-                        <div className="flex items-center gap-2">
-                          {entry.status === "Draft" && canApproveEngineering(currentUser) && (
-                            <Button size="sm" onClick={() => void approveEngineering(entry)}>
-                              Engineering Approval
+                        {entry.status === "Approved by Manager" ? (
+                          <span className="text-xs italic text-gray-400 dark:text-gray-500">
+                            Locked - approved
+                          </span>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            {entry.status === "Draft" && canApproveEngineering(currentUser) && (
+                              <Button size="sm" onClick={() => void approveEngineering(entry)}>
+                                Engineering Approval
+                              </Button>
+                            )}
+                            {entry.status === "Approved by Engineering" && isManager(currentUser) && (
+                              <Button size="sm" onClick={() => void approveForPmo(entry)}>
+                                Manager Approval & Send
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => removeScheduledPlan(entry.id)}
+                            >
+                              Delete
                             </Button>
-                          )}
-                          {entry.status === "Approved by Engineering" && isManager(currentUser) && (
-                            <Button size="sm" onClick={() => void approveForPmo(entry)}>
-                              Manager Approval & Send
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => removeScheduledPlan(entry.id)}
-                          >
-                            Delete
-                          </Button>
-                        </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}

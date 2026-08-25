@@ -65,6 +65,7 @@ export default function MachineParameters() {
   const [machines, setMachines] = useState<MachineRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [machineFilter, setMachineFilter] = useState<string>("All");
+  const [subFilter, setSubFilter] = useState<string>("All");
   const [partMasterFilter, setPartMasterFilter] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [message, setMessage] = useState("");
@@ -108,9 +109,37 @@ export default function MachineParameters() {
     [rows],
   );
 
+  // Machine sub (UTY / MTC / BLD) options, derived from whatever categories exist on the loaded machines
+  const subOptions = useMemo(
+    () => Array.from(new Set(machines.map((m) => m.kategori).filter(Boolean))).sort(),
+    [machines],
+  );
+
+  const machineSubByNo = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const m of machines) map.set(m.no, m.kategori);
+    return map;
+  }, [machines]);
+
+  // Machines list narrowed to the selected sub, used to drive the machine filter dropdown + prev/next stepper
+  const machinesForSubFilter = useMemo(
+    () => (subFilter === "All" ? machines : machines.filter((m) => m.kategori === subFilter)),
+    [machines, subFilter],
+  );
+
+  // If the sub filter changes and the currently selected machine no longer belongs to it, reset to "All Machines"
+  useEffect(() => {
+    if (machineFilter === "All") return;
+    const stillValid = machinesForSubFilter.some((m) => String(m.no) === machineFilter);
+    if (!stillValid) {
+      setMachineFilter("All");
+    }
+  }, [subFilter, machinesForSubFilter, machineFilter]);
+
   const filteredRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return rows.filter((row) => {
+      const matchesSub = subFilter === "All" || machineSubByNo.get(row.machine_no) === subFilter;
       const matchesMachine = machineFilter === "All" || String(row.machine_no) === machineFilter;
       const matchesPartMaster = partMasterFilter === "All" || row.part_master === partMasterFilter;
       const matchesSearch =
@@ -121,9 +150,9 @@ export default function MachineParameters() {
         row.part_checklist.toLowerCase().includes(query) ||
         row.action.toLowerCase().includes(query) ||
         row.standard.toLowerCase().includes(query);
-      return matchesMachine && matchesPartMaster && matchesSearch;
+      return matchesSub && matchesMachine && matchesPartMaster && matchesSearch;
     });
-  }, [rows, machineFilter, partMasterFilter, searchQuery]);
+  }, [rows, subFilter, machineSubByNo, machineFilter, partMasterFilter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages - 1);
@@ -131,14 +160,15 @@ export default function MachineParameters() {
 
   useEffect(() => {
     setPage(0);
-  }, [machineFilter, partMasterFilter, searchQuery]);
+  }, [subFilter, machineFilter, partMasterFilter, searchQuery]);
 
-  const machineIndex = machines.findIndex((machine) => String(machine.no) === machineFilter);
+  const machineIndex = machinesForSubFilter.findIndex((machine) => String(machine.no) === machineFilter);
   const stepMachine = (direction: 1 | -1) => {
-    if (!machines.length) return;
-    const nextIndex = machineIndex === -1 ? (direction === 1 ? 0 : machines.length - 1) : machineIndex + direction;
-    if (nextIndex < 0 || nextIndex >= machines.length) return;
-    setMachineFilter(String(machines[nextIndex].no));
+    if (!machinesForSubFilter.length) return;
+    const nextIndex =
+      machineIndex === -1 ? (direction === 1 ? 0 : machinesForSubFilter.length - 1) : machineIndex + direction;
+    if (nextIndex < 0 || nextIndex >= machinesForSubFilter.length) return;
+    setMachineFilter(String(machinesForSubFilter[nextIndex].no));
   };
 
   const handleAddRow = async () => {
@@ -288,23 +318,31 @@ export default function MachineParameters() {
         </ComponentCard>
 
         <ComponentCard title="Parameters">
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => stepMachine(-1)} disabled={!machines.length}>
+          <div className="mb-4 grid gap-3 md:grid-cols-6">
+            <div className="flex items-center gap-2 md:col-span-2">
+              <Button size="sm" variant="outline" onClick={() => stepMachine(-1)} disabled={!machinesForSubFilter.length}>
                 ← Prev
               </Button>
               <select value={machineFilter} onChange={(e) => setMachineFilter(e.target.value)} className={`flex-1 ${inputClass}`}>
                 <option value="All">All Machines</option>
-                {machines.map((m) => (
+                {machinesForSubFilter.map((m) => (
                   <option key={m.no} value={m.no}>
                     {m.nama_mesin} ({m.kode_mesin})
                   </option>
                 ))}
               </select>
-              <Button size="sm" variant="outline" onClick={() => stepMachine(1)} disabled={!machines.length}>
+              <Button size="sm" variant="outline" onClick={() => stepMachine(1)} disabled={!machinesForSubFilter.length}>
                 Next →
               </Button>
             </div>
+            <select value={subFilter} onChange={(e) => setSubFilter(e.target.value)} className={inputClass}>
+              <option value="All">All Subs</option>
+              {subOptions.map((sub) => (
+                <option key={sub} value={sub}>
+                  {sub}
+                </option>
+              ))}
+            </select>
             <select value={partMasterFilter} onChange={(e) => setPartMasterFilter(e.target.value)} className={inputClass}>
               <option value="All">All Part Masters</option>
               {partMasterOptions.map((partMaster) => (
