@@ -44,8 +44,6 @@ const monthNames = [
   "December",
 ];
 
-const yearOptions = [2025, 2026, 2027];
-
 type SortColumn = "machine" | "asset" | "location";
 type SortDirection = "asc" | "desc";
 type ScheduledSortColumn = "asset" | "sub" | "month" | "week" | "type" | "status";
@@ -184,6 +182,13 @@ export default function YearlyPreventiveSchedule() {
       })),
     [plans, typeLabelByCode],
   );
+
+  // Year filter reflects whatever years actually exist in the saved schedules, not a fixed range
+  const yearOptions = useMemo(() => {
+    const years = new Set(plans.map((plan) => plan.year).filter(Boolean));
+    years.add(new Date().getFullYear());
+    return Array.from(years).sort((a, b) => a - b);
+  }, [plans]);
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {

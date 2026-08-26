@@ -30,23 +30,29 @@ const navItems: NavItem[] = [
   {
     icon: <GridIcon />,
     name: "Dashboard",
-    subItems: [{ name: "Preventive Order", path: "/", pro: false },
+    subItems: [{ name: "Preventive Dashboard", path: "/", pro: false },
+      { name: "Engineering Yearly Schedule", path: "/yearly-schedule-matrix", pro: false },
       { name: "User Profile", path: "/profile", pro: false }
     ],
   },
   {
     icon: <CalenderIcon />,
-    name: "Yearly Preventive Schedule",
+    name: "Preventive Schedule Assignment",
     path: "/yearly-preventive-schedule",
   },
+  // {
+  //   icon: <GridIcon />,
+  //   name: "Yearly Schedule Matrix",
+  //   path: "/yearly-schedule-matrix",
+  // },
   {
     icon: <OrderIcon />,
-    name: "Preventive Maintenance Order",
+    name: "Preventive Order",
     path: "/PreventiveMaintenanceOrder",
   },
   {
     icon: <ListIcon />,
-    name: "Machine Parameters",
+    name: "Machine Preventive Parameters",
     path: "/machine-parameters",
   },
   {

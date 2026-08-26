@@ -20,7 +20,9 @@ export default function UserProfiles() {
         </h3>
         {currentUser && (
           <div className="mb-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-200">
-            Logged in as: {currentUser.name} ({getRoleLabel(currentUser.role)})
+            Logged in as: {currentUser.name}
+            {currentUser.nickname ? ` - ${currentUser.nickname.toUpperCase()}` : ""} (
+            {getRoleLabel(currentUser.role)})
           </div>
         )}
         <div className="space-y-6">

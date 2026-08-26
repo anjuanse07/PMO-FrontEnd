@@ -145,6 +145,13 @@ export default function PreventiveMaintenanceOrder() {
     [maintenanceOrders],
   );
 
+  // Year filter reflects whatever years actually exist in the approved orders, not a fixed range
+  const yearOptions = useMemo(() => {
+    const years = new Set(maintenanceOrders.map((order) => order.year).filter(Boolean));
+    years.add(new Date().getFullYear());
+    return Array.from(years).sort((a, b) => a - b);
+  }, [maintenanceOrders]);
+
   const typeOptions = useMemo(
     () =>
       Array.from(
@@ -414,7 +421,7 @@ export default function PreventiveMaintenanceOrder() {
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
               >
                 <option value="All">All Years</option>
-                {[2025, 2026, 2027].map((year) => (
+                {yearOptions.map((year) => (
                   <option key={year} value={year}>
                     {year}
                   </option>

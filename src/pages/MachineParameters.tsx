@@ -70,6 +70,7 @@ export default function MachineParameters() {
   const [searchQuery, setSearchQuery] = useState("");
   const [message, setMessage] = useState("");
   const [page, setPage] = useState(0);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [newRow, setNewRow] = useState({ machine_no: "", part_master: "", part_checklist: "", action: "", standard: "" });
@@ -135,6 +136,15 @@ export default function MachineParameters() {
       setMachineFilter("All");
     }
   }, [subFilter, machinesForSubFilter, machineFilter]);
+
+  // Same guard for the "Add Parameter" machine selector
+  useEffect(() => {
+    setNewRow((prev) => {
+      if (!prev.machine_no) return prev;
+      const stillValid = machinesForSubFilter.some((m) => String(m.no) === prev.machine_no);
+      return stillValid ? prev : { ...prev, machine_no: "" };
+    });
+  }, [subFilter, machinesForSubFilter]);
 
   const filteredRows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -238,6 +248,21 @@ export default function MachineParameters() {
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadTemplate = () => {
+    const header = ["Asset_Name", "Asset_Code", "Part_Master", "Part_Checklist", "Action", "Standard"];
+    // Pre-fill Asset_Name / Asset_Code from the actual machines already in the database,
+    // so the user can't mistype the values used to match each row to a machine.
+    const lines = machines.map((m) => [m.nama_mesin, m.kode_mesin, "", "", "", ""].map(toCsvValue).join(","));
+    const csv = [header.join(","), ...lines].join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "machine_parameters_template.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleImportCsv = async (file: File) => {
     const text = await file.text();
     const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
@@ -249,7 +274,17 @@ export default function MachineParameters() {
     const machineByName = new Map(machines.map((m) => [m.nama_mesin.trim().toLowerCase(), m.no]));
     const machineByAsset = new Map(machines.map((m) => [m.kode_mesin.trim().toLowerCase(), m.no]));
 
-    const items: Array<{ machine_no: number; part_master: string; part_checklist: string; action?: string | null; standard?: string | null; sort_order?: number }> = [];
+    // Existing parameter rows, keyed by machine + Part_Master + Part_Checklist + Action, so a matching
+    // CSV row is treated as an overwrite (updating Standard) instead of a duplicate insert.
+    const normalize = (value: string) => (value || "").trim().toLowerCase();
+    const existingByKey = new Map<string, ParameterRow>();
+    for (const row of rows) {
+      const key = [row.machine_no, normalize(row.part_master), normalize(row.part_checklist), normalize(row.action)].join("|");
+      existingByKey.set(key, row);
+    }
+
+    const itemsToCreate: Array<{ machine_no: number; part_master: string; part_checklist: string; action?: string | null; standard?: string | null; sort_order?: number }> = [];
+    const itemsToUpdate: Array<{ id: number; standard: string | null }> = [];
     const skipped: string[] = [];
 
     for (let i = 1; i < lines.length; i++) {
@@ -262,25 +297,42 @@ export default function MachineParameters() {
         continue;
       }
 
-      items.push({
-        machine_no: machineNo,
-        part_master: partMaster,
-        part_checklist: partChecklist,
-        action: action || null,
-        standard: standard || null,
-        sort_order: items.length,
-      });
+      const key = [machineNo, normalize(partMaster), normalize(partChecklist), normalize(action)].join("|");
+      const existing = existingByKey.get(key);
+
+      if (existing) {
+        itemsToUpdate.push({ id: existing.id, standard: standard || null });
+      } else {
+        itemsToCreate.push({
+          machine_no: machineNo,
+          part_master: partMaster,
+          part_checklist: partChecklist,
+          action: action || null,
+          standard: standard || null,
+          sort_order: itemsToCreate.length,
+        });
+      }
     }
 
-    if (!items.length) {
+    if (!itemsToCreate.length && !itemsToUpdate.length) {
       setMessage(`Nothing imported. No rows matched a known machine (skipped: ${skipped.length}).`);
       return;
     }
 
     try {
-      const result = await bulkCreateMachineParameters(items);
+      let createdCount = 0;
+      if (itemsToCreate.length) {
+        const result = await bulkCreateMachineParameters(itemsToCreate);
+        createdCount = result.inserted;
+      }
+
+      for (const item of itemsToUpdate) {
+        await updateMachineParameter(item.id, { standard: item.standard });
+      }
+
       setMessage(
-        `Imported ${result.inserted} parameter(s).${skipped.length ? ` Skipped ${skipped.length} row(s): ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? "..." : ""}` : ""}`,
+        `Imported: ${createdCount} new, ${itemsToUpdate.length} overwritten.` +
+          (skipped.length ? ` Skipped ${skipped.length} row(s): ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? "..." : ""}` : ""),
       );
       await loadData();
     } catch (error) {
@@ -298,10 +350,18 @@ export default function MachineParameters() {
 
       <div className="space-y-6">
         <ComponentCard title="Add Parameter">
-          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
+          <div className="grid gap-3 md:grid-cols-4 lg:grid-cols-7">
+            <select value={subFilter} onChange={(e) => setSubFilter(e.target.value)} className={inputClass}>
+              <option value="All">All Subs</option>
+              {subOptions.map((sub) => (
+                <option key={sub} value={sub}>
+                  {sub}
+                </option>
+              ))}
+            </select>
             <select value={newRow.machine_no} onChange={(e) => setNewRow((p) => ({ ...p, machine_no: e.target.value }))} className={inputClass}>
               <option value="">Select machine...</option>
-              {machines.map((m) => (
+              {machinesForSubFilter.map((m) => (
                 <option key={m.no} value={m.no}>
                   {m.nama_mesin} ({m.kode_mesin})
                 </option>
@@ -356,7 +416,7 @@ export default function MachineParameters() {
               <Button size="sm" variant="outline" onClick={handleExportCsv}>
                 Export CSV
               </Button>
-              <Button size="sm" variant="outline" onClick={() => fileInputRef.current?.click()}>
+              <Button size="sm" variant="outline" onClick={() => setIsImportModalOpen(true)}>
                 Import CSV
               </Button>
               <input
@@ -376,6 +436,67 @@ export default function MachineParameters() {
           {message && (
             <div className="mb-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-sm text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-200">
               {message}
+            </div>
+          )}
+
+          {isImportModalOpen && (
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+              <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 dark:bg-gray-900">
+                <h4 className="mb-4 text-lg font-semibold text-gray-800 dark:text-white/90">
+                  Import Machine Parameters from CSV
+                </h4>
+
+                <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-200">
+                  <p className="mb-2 font-semibold">📋 Import Procedure:</p>
+                  <ol className="list-decimal space-y-1 pl-5">
+                    <li>Download the template CSV below - it's pre-filled with every machine's Asset_Name and Asset_Code from the database.</li>
+                    <li>Open the template using Excel or another spreadsheet application.</li>
+                    <li>
+                      Fill in as per the template:
+                      <ul className="mt-1 list-disc space-y-1 pl-5">
+                        <li>Asset_Name</li>
+                        <li>Asset_Code</li>
+                        <li>Part_Master</li>
+                        <li>Part_Checklist</li>
+                        <li>Action</li>
+                        <li>Standard</li>
+                      </ul>
+                    </li>
+                    <li>Save in CSV format.</li>
+                    <li>Import CSV File.</li>
+                  </ol>
+                </div>
+
+                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                  <p className="mb-2 font-semibold">⚠️ Important Notes:</p>
+                  <ul className="list-disc space-y-1 pl-5">
+                    <li>
+                      If the Asset_Name, Asset_Code, Part_Master, Part_Checklist, and Action already
+                      exist in the database, that row will be <span className="font-semibold">overwritten</span>.
+                    </li>
+                    <li>Make sure the data you import is all correct.</li>
+                    <li>This process can't be canceled once submitted.</li>
+                  </ul>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <Button size="sm" variant="outline" onClick={handleDownloadTemplate}>
+                    Download Template CSV
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setIsImportModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      setIsImportModalOpen(false);
+                      fileInputRef.current?.click();
+                    }}
+                  >
+                    Choose File & Upload
+                  </Button>
+                </div>
+              </div>
             </div>
           )}
 
