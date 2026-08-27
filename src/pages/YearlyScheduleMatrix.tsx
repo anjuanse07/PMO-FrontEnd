@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import ComponentCard from "../components/common/ComponentCard";
 import PageMeta from "../components/common/PageMeta";
-import Badge from "../components/ui/badge/Badge";
+import YearlyProgressDashboard from "../components/ecommerce/YearlyProgressDashboard";
 import { type MachineSub } from "../data/preventiveMaintenanceData";
 import {
   fetchMachines,
@@ -48,6 +48,7 @@ const monthAbbrev = [
 ];
 
 const WEEKS_PER_MONTH = 5;
+const yearOptions = [2025, 2026, 2027];
 
 const subTabs: { key: MachineSub; label: string }[] = [
   { key: "BLD", label: "BLD" },
@@ -111,15 +112,6 @@ export default function YearlyScheduleMatrix() {
 
     void loadAll();
   }, []);
-
-  // Year filter reflects whatever years actually exist in the schedules/orders, not a fixed range
-  const yearOptions = useMemo(() => {
-    const years = new Set<number>();
-    for (const plan of schedules) years.add(plan.tahun);
-    for (const order of orders) years.add(order.year);
-    years.add(new Date().getFullYear());
-    return Array.from(years).sort((a, b) => a - b);
-  }, [schedules, orders]);
 
   // machine list, grouped by sub (BLD / UTY / MTC), keyed by machine no
   const machinesBySub = useMemo(() => {
@@ -277,16 +269,6 @@ export default function YearlyScheduleMatrix() {
 
     return { perSub, perSubMonth };
   }, [schedules, orders, subByMachineId, selectedYear]);
-
-  const overallStats = useMemo(() => {
-    return Object.values(dashboardStats.perSub).reduce(
-      (acc, cur) => ({
-        scheduled: acc.scheduled + cur.scheduled,
-        completed: acc.completed + cur.completed,
-      }),
-      { scheduled: 0, completed: 0 },
-    );
-  }, [dashboardStats]);
 
   const pct = (completed: number, scheduled: number) =>
     scheduled === 0 ? 0 : Math.min(100, Math.round((completed / scheduled) * 100));
@@ -516,97 +498,14 @@ export default function YearlyScheduleMatrix() {
             )}
           </ComponentCard>
         ) : (
-          <div className="space-y-6">
-            <ComponentCard title={`Overall Progress - ${selectedYear}`}>
-              <div className="mb-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
-                <span>
-                  {overallStats.completed} of {overallStats.scheduled} preventive actions completed
-                </span>
-                <Badge size="sm" color={pct(overallStats.completed, overallStats.scheduled) >= 80 ? "success" : "warning"}>
-                  {pct(overallStats.completed, overallStats.scheduled)}%
-                </Badge>
-              </div>
-              <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-                <div
-                  className="h-full rounded-full bg-brand-500"
-                  style={{ width: `${pct(overallStats.completed, overallStats.scheduled)}%` }}
-                />
-              </div>
-            </ComponentCard>
-
-            <div className="grid gap-4 md:grid-cols-3">
-              {subTabs.map((tab) => {
-                const stat = dashboardStats.perSub[tab.key];
-                const percent = pct(stat.completed, stat.scheduled);
-                return (
-                  <ComponentCard key={tab.key} title={`${tab.label} Group`}>
-                    <div className="mb-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
-                      <span>
-                        {stat.completed} / {stat.scheduled} completed
-                      </span>
-                      <Badge size="sm" color={percent >= 80 ? "success" : percent >= 50 ? "primary" : "warning"}>
-                        {percent}%
-                      </Badge>
-                    </div>
-                    <div className="h-2.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-                      <div
-                        className={`h-full rounded-full ${
-                          percent >= 80 ? "bg-green-500" : percent >= 50 ? "bg-brand-500" : "bg-yellow-400"
-                        }`}
-                        style={{ width: `${percent}%` }}
-                      />
-                    </div>
-                  </ComponentCard>
-                );
-              })}
-            </div>
-
-            <ComponentCard title="Monthly Completion Breakdown">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-xs">
-                  <thead className="bg-gray-50 dark:bg-gray-800/60">
-                    <tr>
-                      <th className="px-3 py-2 font-semibold uppercase text-gray-600 dark:text-gray-300">Group</th>
-                      {monthAbbrev.map((month) => (
-                        <th key={month} className="px-3 py-2 text-center font-semibold uppercase text-gray-600 dark:text-gray-300">
-                          {month}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                    {subTabs.map((tab) => (
-                      <tr key={tab.key}>
-                        <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{tab.label}</td>
-                        {dashboardStats.perSubMonth[tab.key].map((cell, idx) => {
-                          const percent = pct(cell.completed, cell.scheduled);
-                          return (
-                            <td key={idx} className="px-3 py-2 text-center text-gray-600 dark:text-gray-300">
-                              {cell.scheduled === 0 ? (
-                                <span className="text-gray-300">-</span>
-                              ) : (
-                                <span
-                                  className={
-                                    percent >= 80
-                                      ? "text-green-600 dark:text-green-400"
-                                      : percent >= 50
-                                        ? "text-brand-600 dark:text-brand-400"
-                                        : "text-yellow-600 dark:text-yellow-400"
-                                  }
-                                >
-                                  {cell.completed}/{cell.scheduled}
-                                </span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </ComponentCard>
-          </div>
+          <YearlyProgressDashboard
+            year={selectedYear}
+            showYearSelector={false}
+            machines={machineRecords}
+            schedules={schedules}
+            orders={orders}
+            isLoading={isLoading}
+          />
         )}
       </div>
     </>

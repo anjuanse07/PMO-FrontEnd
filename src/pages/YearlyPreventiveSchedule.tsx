@@ -50,7 +50,7 @@ type ScheduledSortColumn = "asset" | "sub" | "month" | "week" | "type" | "status
 
 export default function YearlyPreventiveSchedule() {
   const [selectedSub, setSelectedSub] = useState<MachineSub>("UTY");
-  const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(0);
   const [selectedWeek, setSelectedWeek] = useState(1);
   const [plans, setPlans] = useState<PlannedPreventive[]>([]);
@@ -183,12 +183,19 @@ export default function YearlyPreventiveSchedule() {
     [plans, typeLabelByCode],
   );
 
-  // Year filter reflects whatever years actually exist in the saved schedules, not a fixed range
+  // Year filter includes years with saved schedules plus a forward-looking window so
+  // upcoming years can always be planned ahead of time, even before any plan exists yet.
+  const YEARS_AHEAD_TO_PLAN = 5;
   const yearOptions = useMemo(() => {
+    const currentYear = new Date().getFullYear();
     const years = new Set(plans.map((plan) => plan.year).filter(Boolean));
-    years.add(new Date().getFullYear());
+    for (let year = currentYear; year <= currentYear + YEARS_AHEAD_TO_PLAN; year += 1) {
+      years.add(year);
+    }
+    // Guard against a selected year (e.g. restored from a saved plan) that falls outside the window
+    years.add(selectedYear);
     return Array.from(years).sort((a, b) => a - b);
-  }, [plans]);
+  }, [plans, selectedYear]);
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn === column) {
