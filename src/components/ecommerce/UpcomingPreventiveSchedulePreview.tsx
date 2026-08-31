@@ -11,6 +11,9 @@ import { fetchSchedules, type ScheduleRecord } from "../../services/pmoApi";
  * soonest-scheduled first, so whoever opens the dashboard can see at a
  * glance what's waiting on them.
  *
+ * Scoped to a year (and optionally a month) via props, so it stays in sync
+ * with the rest of the dashboard's shared filters.
+ *
  * NOTE: update the `to="/yearly-preventive-schedule"` path below once that
  * page is registered in the router if the route differs.
  */
@@ -22,9 +25,20 @@ const monthAbbrev = [
 
 const ROWS_LIMIT = 6;
 
-export default function UpcomingPreventiveSchedulePreview() {
+interface UpcomingPreventiveSchedulePreviewProps {
+  /** Year to filter to. Defaults to the current calendar year. */
+  year?: number;
+  /** Month to filter to (0-11), or "All" for the full year. Defaults to "All". */
+  month?: number | "All";
+}
+
+export default function UpcomingPreventiveSchedulePreview({
+  year,
+  month = "All",
+}: UpcomingPreventiveSchedulePreviewProps) {
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const currentYear = year ?? new Date().getFullYear();
 
   useEffect(() => {
     const loadData = async () => {
@@ -42,20 +56,25 @@ export default function UpcomingPreventiveSchedulePreview() {
     void loadData();
   }, []);
 
+  const isPending = (s: ScheduleRecord) =>
+    (s.status === "Draft" || s.status === "Approved by Engineering") &&
+    s.tahun === currentYear &&
+    (month === "All" || s.bulan === month);
+
   const pendingEntries = useMemo(() => {
     return schedules
-      .filter((s) => s.status === "Draft" || s.status === "Approved by Engineering")
+      .filter(isPending)
       .sort((a, b) => {
         if (a.tahun !== b.tahun) return a.tahun - b.tahun;
         if (a.bulan !== b.bulan) return a.bulan - b.bulan;
         return a.minggu - b.minggu;
       })
       .slice(0, ROWS_LIMIT);
-  }, [schedules]);
+  }, [schedules, currentYear, month]);
 
   const pendingCount = useMemo(
-    () => schedules.filter((s) => s.status === "Draft" || s.status === "Approved by Engineering").length,
-    [schedules],
+    () => schedules.filter(isPending).length,
+    [schedules, currentYear, month],
   );
 
   return (

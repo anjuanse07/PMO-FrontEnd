@@ -18,13 +18,21 @@ import { fetchSchedules, type ScheduleRecord } from "../../services/pmoApi";
  * at each successive gate, not a partition of entries.
  *
  * Percentages are relative to the total number of schedule entries created
- * for the selected year.
+ * for the selected year (and month, if a specific month is selected via the
+ * `month` prop instead of "All").
  */
-export default function SchedulePlanningStatusMetrics() {
+interface SchedulePlanningStatusMetricsProps {
+  /** Year to filter to. Defaults to the current calendar year. */
+  year?: number;
+  /** Month to filter to (0-11), or "All" for the full year. Defaults to "All". */
+  month?: number | "All";
+}
+
+export default function SchedulePlanningStatusMetrics({ year, month = "All" }: SchedulePlanningStatusMetricsProps) {
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
+  const currentYear = year ?? new Date().getFullYear();
 
   useEffect(() => {
     const loadData = async () => {
@@ -43,7 +51,7 @@ export default function SchedulePlanningStatusMetrics() {
   }, []);
 
   const { totalEntries, draftCount, pendingEngineeringCount, pendingManagerCount } = useMemo(() => {
-    const yearEntries = schedules.filter((s) => s.tahun === currentYear);
+    const yearEntries = schedules.filter((s) => s.tahun === currentYear && (month === "All" || s.bulan === month));
     const isDraft = (s: ScheduleRecord) => s.status === "Draft";
     const isEngineeringApproved = (s: ScheduleRecord) => s.status === "Approved by Engineering";
 
@@ -59,7 +67,7 @@ export default function SchedulePlanningStatusMetrics() {
       // they are (Draft or Engineering-approved both still count).
       pendingManagerCount: yearEntries.filter((s) => isDraft(s) || isEngineeringApproved(s)).length,
     };
-  }, [schedules, currentYear]);
+  }, [schedules, currentYear, month]);
 
   const pct = (count: number) => (totalEntries === 0 ? 0 : Math.round((count / totalEntries) * 100));
 

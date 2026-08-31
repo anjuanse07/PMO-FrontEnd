@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import EcommerceMetrics from "../../components/ecommerce/EcommerceMetrics";
 import ApprovalStatusMetrics from "../../components/ecommerce/ApprovalStatusMetrics";
 import SchedulePlanningStatusMetrics from "../../components/ecommerce/SchedulePlanningStatusMetrics";
@@ -13,12 +13,6 @@ import YearlyScheduleMatrixPreview from "../../components/ecommerce/YearlySchedu
 import UpcomingPreventiveSchedulePreview from "../../components/ecommerce/UpcomingPreventiveSchedulePreview";
 import MonthlyCompletionBreakdown from "../../components/ecommerce/MonthlyCompletionBreakdown";
 import PageMeta from "../../components/common/PageMeta";
-import {
-  fetchSchedules,
-  fetchApprovedOrders,
-  type ScheduleRecord,
-  type ApprovedOrderRecord,
-} from "../../services/pmoApi";
 
 const monthNames = [
   "January", "February", "March", "April", "May", "June",
@@ -29,38 +23,16 @@ export default function Home() {
   // Single shared Year/Month filter for the whole dashboard. Every panel below
   // reads from this instead of keeping its own selector, so picking a year or
   // month here updates every card, chart, and table together.
+  //
+  // Year options are a fixed window around the current year rather than
+  // derived from any dataset, since Home doesn't fetch data itself (each
+  // panel still fetches its own). Widen this range if older data needs to
+  // be reachable from the dropdown.
   const thisYear = new Date().getFullYear();
+  const yearOptions = [thisYear - 2, thisYear - 1, thisYear, thisYear + 1];
+
   const [selectedYear, setSelectedYear] = useState(thisYear);
   const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
-
-  // Lightweight fetch of schedules/orders here purely to know which years
-  // actually have data, so the Year dropdown only lists real years instead
-  // of a fixed guessed range. Each panel below still does its own fetch for
-  // its own data - this doesn't replace that.
-  const [yearProbeSchedules, setYearProbeSchedules] = useState<ScheduleRecord[]>([]);
-  const [yearProbeOrders, setYearProbeOrders] = useState<ApprovedOrderRecord[]>([]);
-
-  useEffect(() => {
-    const loadYears = async () => {
-      try {
-        const [scheduleRows, orderRows] = await Promise.all([fetchSchedules(), fetchApprovedOrders()]);
-        setYearProbeSchedules(scheduleRows);
-        setYearProbeOrders(orderRows);
-      } catch (error) {
-        console.error("Failed to load year options for dashboard filter:", error);
-      }
-    };
-    void loadYears();
-  }, []);
-
-  const yearOptions = useMemo(() => {
-    const years = new Set<number>();
-    yearProbeSchedules.forEach((sched) => years.add(sched.tahun));
-    yearProbeOrders.forEach((order) => years.add(order.year));
-    years.add(thisYear);
-    years.add(selectedYear);
-    return Array.from(years).sort((a, b) => a - b);
-  }, [yearProbeSchedules, yearProbeOrders, thisYear, selectedYear]);
 
   return (
     <>

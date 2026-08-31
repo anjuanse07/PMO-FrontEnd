@@ -47,6 +47,12 @@ interface YearlyScheduleMatrixPreviewProps {
   orders?: ApprovedOrderRecord[];
   isLoading?: boolean;
   year?: number;
+  /** Month to show (0-11). "All" falls back to the current calendar month, since the
+   *  week strip always shows one specific month. When provided, hides the internal
+   *  Month dropdown (see showMonthSelector). */
+  month?: number | "All";
+  /** Show the built-in Month dropdown. Set false when a parent page has a shared one. */
+  showMonthSelector?: boolean;
 }
 
 export default function YearlyScheduleMatrixPreview({
@@ -55,11 +61,15 @@ export default function YearlyScheduleMatrixPreview({
   orders: ordersProp,
   isLoading: isLoadingProp,
   year,
+  month,
+  showMonthSelector = true,
 }: YearlyScheduleMatrixPreviewProps) {
   const isControlled = machinesProp !== undefined && schedulesProp !== undefined && ordersProp !== undefined;
 
   const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedMonth, setSelectedMonth] = useState(
+    month === undefined || month === "All" ? new Date().getMonth() : month,
+  );
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
@@ -68,6 +78,10 @@ export default function YearlyScheduleMatrixPreview({
   useEffect(() => {
     if (year !== undefined) setSelectedYear(year);
   }, [year]);
+
+  useEffect(() => {
+    if (month !== undefined) setSelectedMonth(month === "All" ? new Date().getMonth() : month);
+  }, [month]);
 
   useEffect(() => {
     if (isControlled) return;
@@ -164,20 +178,24 @@ export default function YearlyScheduleMatrixPreview({
   return (
     <ComponentCard title="Yearly Schedule Matrix">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-          <span>Month</span>
-          <select
-            value={selectedMonth}
-            onChange={(e) => setSelectedMonth(Number(e.target.value))}
-            className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          >
-            {monthAbbrev.map((month, idx) => (
-              <option key={month} value={idx}>
-                {month}
-              </option>
-            ))}
-          </select>
-        </label>
+        {showMonthSelector ? (
+          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <span>Month</span>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(Number(e.target.value))}
+              className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            >
+              {monthAbbrev.map((m, idx) => (
+                <option key={m} value={idx}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{monthAbbrev[selectedMonth]}</span>
+        )}
         <Link
           to="/yearly-schedule-matrix"
           className="text-sm font-medium text-brand-500 hover:text-brand-600 dark:text-brand-400"

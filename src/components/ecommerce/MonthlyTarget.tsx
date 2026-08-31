@@ -23,14 +23,36 @@ const monthNames = [
   "December",
 ];
 
-export default function MonthlyTarget() {
+interface MonthlyTargetProps {
+  /** Year to show. When provided, hides the internal Year dropdown. */
+  year?: number;
+  /** Month to show (0-11). "All" falls back to the current calendar month, since this
+   *  widget always shows progress for one specific month. When provided (as a number
+   *  or "All"), hides the internal Month dropdown. */
+  month?: number | "All";
+  /** Show the built-in Year/Month dropdowns. Set false when a parent page has shared ones. */
+  showSelectors?: boolean;
+}
+
+export default function MonthlyTarget({ year, month, showSelectors = true }: MonthlyTargetProps) {
   const today = new Date();
 
-  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(today.getMonth());
+  const [selectedYear, setSelectedYear] = useState(year ?? today.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(
+    month === undefined || month === "All" ? today.getMonth() : month,
+  );
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (year !== undefined) setSelectedYear(year);
+  }, [year]);
+
+  useEffect(() => {
+    if (month !== undefined) setSelectedMonth(month === "All" ? today.getMonth() : month);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -131,30 +153,32 @@ export default function MonthlyTarget() {
               Completion progress for the selected month
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(Number(e.target.value))}
-              className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-            >
-              {monthNames.map((month, idx) => (
-                <option key={month} value={idx}>
-                  {month}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-            >
-              {yearOptions.map((year) => (
-                <option key={year} value={year}>
-                  {year}
-                </option>
-              ))}
-            </select>
-          </div>
+          {showSelectors && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                {monthNames.map((m, idx) => (
+                  <option key={m} value={idx}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                {yearOptions.map((yr) => (
+                  <option key={yr} value={yr}>
+                    {yr}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div className="relative ">
           <div className="max-h-[330px]" id="chartDarkStyle">

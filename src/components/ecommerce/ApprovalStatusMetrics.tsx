@@ -8,11 +8,18 @@ import { fetchApprovedOrders, type ApprovedOrderRecord } from "../../services/pm
  * of the 3 sign-off stages (Technician -> Machine User/PIC -> Engineering).
  * Percentages are relative to the total number of orders created this year.
  */
-export default function ApprovalStatusMetrics() {
+interface ApprovalStatusMetricsProps {
+  /** Year to filter to. Defaults to the current calendar year. */
+  year?: number;
+  /** Month to filter to (0-11), or "All" for the full year. Defaults to "All". */
+  month?: number | "All";
+}
+
+export default function ApprovalStatusMetrics({ year, month = "All" }: ApprovalStatusMetricsProps) {
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
+  const currentYear = year ?? new Date().getFullYear();
 
   useEffect(() => {
     const loadData = async () => {
@@ -31,14 +38,14 @@ export default function ApprovalStatusMetrics() {
   }, []);
 
   const { totalOrders, technicianApproved, picApproved, engineeringApproved } = useMemo(() => {
-    const yearOrders = orders.filter((o) => o.year === currentYear);
+    const scopedOrders = orders.filter((o) => o.year === currentYear && (month === "All" || o.month === month));
     return {
-      totalOrders: yearOrders.length,
-      technicianApproved: yearOrders.filter((o) => Boolean(o.approved_by_technician_date)).length,
-      picApproved: yearOrders.filter((o) => Boolean(o.approved_by_pic_date)).length,
-      engineeringApproved: yearOrders.filter((o) => Boolean(o.approved_by_engineering_date)).length,
+      totalOrders: scopedOrders.length,
+      technicianApproved: scopedOrders.filter((o) => Boolean(o.approved_by_technician_date)).length,
+      picApproved: scopedOrders.filter((o) => Boolean(o.approved_by_pic_date)).length,
+      engineeringApproved: scopedOrders.filter((o) => Boolean(o.approved_by_engineering_date)).length,
     };
-  }, [orders, currentYear]);
+  }, [orders, currentYear, month]);
 
   const pct = (count: number) => (totalOrders === 0 ? 0 : Math.round((count / totalOrders) * 100));
 

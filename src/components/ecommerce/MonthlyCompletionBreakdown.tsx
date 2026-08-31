@@ -40,6 +40,8 @@ interface MonthlyCompletionBreakdownProps {
   orders?: ApprovedOrderRecord[];
   isLoading?: boolean;
   year?: number;
+  /** Show the built-in Year dropdown. Set false when a parent page has a shared one. */
+  showYearSelector?: boolean;
 }
 
 export default function MonthlyCompletionBreakdown({
@@ -48,6 +50,7 @@ export default function MonthlyCompletionBreakdown({
   orders: ordersProp,
   isLoading: isLoadingProp,
   year,
+  showYearSelector = true,
 }: MonthlyCompletionBreakdownProps) {
   const isControlled = machinesProp !== undefined && schedulesProp !== undefined && ordersProp !== undefined;
 
@@ -155,7 +158,7 @@ export default function MonthlyCompletionBreakdown({
         <span className="text-sm text-gray-500 dark:text-gray-400">
           Completed vs scheduled, per group, per month
         </span>
-        {!isControlled && (
+        {!isControlled && showYearSelector && (
           <select
             value={selectedYear}
             onChange={(e) => setSelectedYear(Number(e.target.value))}

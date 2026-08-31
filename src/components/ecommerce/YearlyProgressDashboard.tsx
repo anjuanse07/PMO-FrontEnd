@@ -48,7 +48,10 @@ const subTabs: { key: MachineSub; label: string }[] = [
 interface YearlyProgressDashboardProps {
   /** Year to show. In standalone mode this also seeds the internal selector. */
   year?: number;
-  /** Show the built-in Year dropdown. Set false when the parent page already has one. */
+  /** Month to show (0-11), or "All" for the full year. In standalone mode this also
+   *  seeds the internal selector. */
+  month?: number | "All";
+  /** Show the built-in Year/Month dropdowns. Set false when the parent page already has one. */
   showYearSelector?: boolean;
   /** Pass these three together to run in controlled mode (no internal fetch). */
   machines?: MachineRecord[];
@@ -65,6 +68,7 @@ interface YearlyProgressDashboardProps {
 
 export default function YearlyProgressDashboard({
   year,
+  month,
   showYearSelector = true,
   machines: machinesProp,
   schedules: schedulesProp,
@@ -85,6 +89,10 @@ export default function YearlyProgressDashboard({
   useEffect(() => {
     if (year !== undefined) setSelectedYear(year);
   }, [year]);
+
+  useEffect(() => {
+    if (month !== undefined) setSelectedMonth(month);
+  }, [month]);
 
   useEffect(() => {
     if (isControlled) return;

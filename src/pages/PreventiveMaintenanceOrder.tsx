@@ -105,9 +105,14 @@ export default function PreventiveMaintenanceOrder() {
   // Reflects the backend record's engineering sign-off, not the in-progress draft —
   // so confirming Engineering approval doesn't lock the form before Save can persist it.
   const [isRecordLocked, setIsRecordLocked] = useState(false);
-  const [selectedYear, setSelectedYear] = useState<number | "All">("All");
-  const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
+  const today = new Date();
+  const [selectedYear, setSelectedYear] = useState<number | "All">(today.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | "All">(today.getMonth());
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
+  // Hides "Completed" orders from the table by default - the list is meant for orders
+  // that still need attention, not a historical log. Independent of the Status dropdown
+  // above, so switching Status back to "All" doesn't silently bring Completed back.
+  const [hideCompleted, setHideCompleted] = useState(true);
   const [subFilter, setSubFilter] = useState<string>("All");
   const [departmentFilter, setDepartmentFilter] = useState<string>("All");
   const [typeFilter, setTypeFilter] = useState<string>("All");
@@ -121,8 +126,8 @@ export default function PreventiveMaintenanceOrder() {
     machineAssetNumber: "",
     machineName: "",
     preventiveDate: "",
-    preventiveTimeStart: "08:00",
-    preventiveTimeEnd: "10:00",
+    preventiveTimeStart: "",
+    preventiveTimeEnd: "",
     department: "",
     checklist: { mechanical: [], electrical: [], utilities: [] } as ChecklistSection,
     approvals: emptyApprovals(),
@@ -242,6 +247,7 @@ export default function PreventiveMaintenanceOrder() {
       const matchesYear = selectedYear === "All" || order.year === selectedYear;
       const matchesMonth = selectedMonth === "All" || order.month === selectedMonth;
       const matchesStatus = statusFilter === "All" || order.status === statusFilter;
+      const matchesHideCompleted = !hideCompleted || order.status !== "Completed";
       const matchesSub = subFilter === "All" || order.sub === subFilter;
       const matchesDepartment = departmentFilter === "All" || order.department === departmentFilter;
       const matchesType =
@@ -256,7 +262,7 @@ export default function PreventiveMaintenanceOrder() {
         order.id.toLowerCase().includes(query) ||
         order.sub.toLowerCase().includes(query);
 
-      return matchesYear && matchesMonth && matchesStatus && matchesSub && matchesDepartment && matchesType && matchesWeek && matchesSearch;
+      return matchesYear && matchesMonth && matchesStatus && matchesHideCompleted && matchesSub && matchesDepartment && matchesType && matchesWeek && matchesSearch;
     });
 
     return [...filtered].sort((a, b) => {
@@ -280,7 +286,7 @@ export default function PreventiveMaintenanceOrder() {
           : String(aVal).localeCompare(String(bVal));
       return orderSortDirection === "asc" ? comparison : -comparison;
     });
-  }, [maintenanceOrders, searchQuery, selectedMonth, selectedYear, statusFilter, subFilter, departmentFilter, typeFilter, weekFilter, orderSortColumn, orderSortDirection]);
+  }, [maintenanceOrders, searchQuery, selectedMonth, selectedYear, statusFilter, hideCompleted, subFilter, departmentFilter, typeFilter, weekFilter, orderSortColumn, orderSortDirection]);
 
   const openForm = async (order: MaintenanceOrder) => {
     setSelectedOrder(order);
@@ -678,6 +684,16 @@ export default function PreventiveMaintenanceOrder() {
                 <option value="Approval">Approval</option>
                 <option value="Completed">Completed</option>
               </select>
+            </label>
+
+            <label className="flex items-end gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={hideCompleted}
+                onChange={(e) => setHideCompleted(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800"
+              />
+              <span className="pb-0.5">Hide Completed</span>
             </label>
 
             <label className="text-sm text-gray-700 dark:text-gray-300">

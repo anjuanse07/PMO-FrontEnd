@@ -24,11 +24,22 @@ const monthNames = [
   "Dec",
 ];
 
-export default function MonthlySalesChart() {
-  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+interface MonthlySalesChartProps {
+  /** Year to show. When provided, the internal Year dropdown is hidden and this value drives the chart. */
+  year?: number;
+  /** Show the built-in Year dropdown. Set false when the parent page already has a shared one. */
+  showYearSelector?: boolean;
+}
+
+export default function MonthlySalesChart({ year, showYearSelector = true }: MonthlySalesChartProps) {
+  const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    if (year !== undefined) setSelectedYear(year);
+  }, [year]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -199,17 +210,19 @@ export default function MonthlySalesChart() {
             Scheduled actions compared to what was completed, per month
           </p>
         </div>
-        <select
-          value={selectedYear}
-          onChange={(e) => setSelectedYear(Number(e.target.value))}
-          className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-        >
-          {yearOptions.map((year) => (
-            <option key={year} value={year}>
-              {year}
-            </option>
-          ))}
-        </select>
+        {showYearSelector && (
+          <select
+            value={selectedYear}
+            onChange={(e) => setSelectedYear(Number(e.target.value))}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+          >
+            {yearOptions.map((yr) => (
+              <option key={yr} value={yr}>
+                {yr}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {isLoading && (

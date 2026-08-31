@@ -8,12 +8,24 @@ import {
   type ApprovedOrderRecord,
 } from "../../services/pmoApi";
 
-export default function EcommerceMetrics() {
+const monthNames = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+interface EcommerceMetricsProps {
+  /** Year to filter to. Defaults to the current calendar year. */
+  year?: number;
+  /** Month to filter to (0-11), or "All" for the full year. Defaults to "All". */
+  month?: number | "All";
+}
+
+export default function EcommerceMetrics({ year, month = "All" }: EcommerceMetricsProps) {
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const currentYear = useMemo(() => new Date().getFullYear(), []);
+  const currentYear = year ?? new Date().getFullYear();
 
   useEffect(() => {
     const loadData = async () => {
@@ -32,16 +44,20 @@ export default function EcommerceMetrics() {
     void loadData();
   }, []);
 
-  // Yearly Plan (Total) = every scheduled preventive entry for the current year
+  // Plan (Total) = every scheduled preventive entry for the selected year (+ month, if not "All")
   // Not Yet Completed = scheduled entries whose approved order hasn't reached "Completed" yet
   const { totalPlan, pendingCount, completedPct, pendingPct } = useMemo(() => {
-    const total = schedules.filter((s) => s.tahun === currentYear).length;
-    const completedCount = orders.filter((o) => o.year === currentYear && o.status === "Completed").length;
+    const total = schedules.filter((s) => s.tahun === currentYear && (month === "All" || s.bulan === month)).length;
+    const completedCount = orders.filter(
+      (o) => o.year === currentYear && o.status === "Completed" && (month === "All" || o.month === month),
+    ).length;
     const pending = Math.max(0, total - completedCount);
     const donePct = total === 0 ? 0 : Math.round((completedCount / total) * 100);
     const pendPct = total === 0 ? 0 : Math.round((pending / total) * 100);
     return { totalPlan: total, pendingCount: pending, completedPct: donePct, pendingPct: pendPct };
-  }, [schedules, orders, currentYear]);
+  }, [schedules, orders, currentYear, month]);
+
+  const periodLabel = month === "All" ? `${currentYear}` : `${monthNames[month]} ${currentYear}`;
 
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6">
@@ -54,7 +70,7 @@ export default function EcommerceMetrics() {
         <div className="flex items-end justify-between mt-5">
           <div>
             <span className="text-sm text-gray-500 dark:text-gray-400">
-              Yearly Plan ({currentYear})
+              Plan ({periodLabel})
             </span>
             <h4 className="mt-2 font-bold text-gray-800 text-title-sm dark:text-white/90">
               {isLoading ? "--" : totalPlan.toLocaleString()}

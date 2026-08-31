@@ -9,12 +9,12 @@ import {
 // Which technicians-table column to group by, matching the real schema hierarchy:
 // detail_technician_role (Jabatan) -> technician_main_sub -> technician_child_sub.
 // (Note: the `role` column itself is uniform ("Technician") and isn't a useful grouping.)
-type GroupByField = "detail_technician_role" | "technician_main_sub" | "technician_child_sub";
+type GroupByField = "technician_main_sub" | "technician_child_sub" | "detail_technician_role";
 
 const groupByOptions: { value: GroupByField; label: string }[] = [
-  { value: "detail_technician_role", label: "Detail Role" },
   { value: "technician_main_sub", label: "Main Sub" },
   { value: "technician_child_sub", label: "Child Sub" },
+  { value: "detail_technician_role", label: "Detail Role" },
 ];
 
 type TechnicianStat = {
@@ -79,14 +79,31 @@ const rankBadgeStyle = (rank: number) => {
   return "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400";
 };
 
-export default function TechnicianWorkloadTable() {
+interface TechnicianWorkloadTableProps {
+  /** Year to filter to. When provided, hides the internal Year dropdown. */
+  year?: number;
+  /** Month to filter to (0-11), or "All" for the full year. Defaults to "All". */
+  month?: number | "All";
+  /** Show the built-in Year dropdown. Set false when a parent page has a shared one. */
+  showYearSelector?: boolean;
+}
+
+export default function TechnicianWorkloadTable({
+  year,
+  month = "All",
+  showYearSelector = true,
+}: TechnicianWorkloadTableProps) {
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [technicianRoster, setTechnicianRoster] = useState<TechnicianRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"role" | "ranking">("role");
-  const [groupBy, setGroupBy] = useState<GroupByField>("detail_technician_role");
-  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  const [groupBy, setGroupBy] = useState<GroupByField>("technician_main_sub");
+  const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (year !== undefined) setSelectedYear(year);
+  }, [year]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -114,7 +131,10 @@ export default function TechnicianWorkloadTable() {
     return Array.from(years).sort((a, b) => a - b);
   }, [orders, selectedYear]);
 
-  const yearOrders = useMemo(() => orders.filter((o) => o.year === selectedYear), [orders, selectedYear]);
+  const yearOrders = useMemo(
+    () => orders.filter((o) => o.year === selectedYear && (month === "All" || o.month === month)),
+    [orders, selectedYear, month],
+  );
 
   // Per-technician raw stats, attributing each order to every technician named on it
   // (technician_name can hold multiple comma-separated names for a single order)
@@ -233,17 +253,19 @@ export default function TechnicianWorkloadTable() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(Number(e.target.value))}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-          >
-            {yearOptions.map((yr) => (
-              <option key={yr} value={yr}>
-                {yr}
-              </option>
-            ))}
-          </select>
+          {showYearSelector && (
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(Number(e.target.value))}
+              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+            >
+              {yearOptions.map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
+          )}
 
           {viewMode === "role" && (
             <select
