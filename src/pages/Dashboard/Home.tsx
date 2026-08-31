@@ -1,4 +1,6 @@
 import EcommerceMetrics from "../../components/ecommerce/EcommerceMetrics";
+import ApprovalStatusMetrics from "../../components/ecommerce/ApprovalStatusMetrics";
+import TechnicianWorkloadTable from "../../components/ecommerce/TechnicianWorkloadTable";
 import MonthlySalesChart from "../../components/ecommerce/MonthlySalesChart";
 // import StatisticsChart from "../../components/ecommerce/StatisticsChart";
 import MonthlyTarget from "../../components/ecommerce/MonthlyTarget";
@@ -23,11 +25,18 @@ export default function Home() {
         <div className="col-span-12 space-y-6 xl:col-span-7">
           <EcommerceMetrics />
 
+          <ApprovalStatusMetrics />
+
           <MonthlySalesChart />
         </div>
 
         <div className="col-span-12 xl:col-span-5">
           <MonthlyTarget />
+        </div>
+
+        {/* Technician workload: by role and ranked, full width */}
+        <div className="col-span-12">
+          <TechnicianWorkloadTable />
         </div>
 
         {/* <div className="col-span-12">

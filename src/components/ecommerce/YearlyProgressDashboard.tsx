@@ -70,6 +70,7 @@ export default function YearlyProgressDashboard({
   const isControlled = machinesProp !== undefined && schedulesProp !== undefined && ordersProp !== undefined;
 
   const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
@@ -216,6 +217,22 @@ export default function YearlyProgressDashboard({
                 ))}
               </select>
             </label>
+
+            <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Month (BLD / UTY / MTC groups)</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value === "All" ? "All" : Number(e.target.value))}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="All">Full Year</option>
+                {monthAbbrev.map((month, idx) => (
+                  <option key={month} value={idx}>
+                    {month}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           {effectiveLoading && (
             <div className="mt-3 text-xs italic text-gray-400 dark:text-gray-500">Loading...</div>
@@ -242,10 +259,14 @@ export default function YearlyProgressDashboard({
 
       <div className="grid gap-4 md:grid-cols-3">
         {subTabs.map((tab) => {
-          const stat = dashboardStats.perSub[tab.key];
+          const stat =
+            selectedMonth === "All" ? dashboardStats.perSub[tab.key] : dashboardStats.perSubMonth[tab.key][selectedMonth];
           const percent = pct(stat.completed, stat.scheduled);
           return (
             <ComponentCard key={tab.key} title={`${tab.label} Group`}>
+              <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">
+                {selectedMonth === "All" ? `Full year ${selectedYear}` : `${monthAbbrev[selectedMonth]} ${selectedYear}`}
+              </p>
               <div className="mb-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
                 <span>
                   {stat.completed} / {stat.scheduled} completed

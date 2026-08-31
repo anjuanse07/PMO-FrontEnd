@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Chart from "react-apexcharts";
 import { ApexOptions } from "apexcharts";
+import Badge from "../ui/badge/Badge";
 import {
   fetchSchedules,
   fetchApprovedOrders,
@@ -76,6 +77,13 @@ export default function MonthlySalesChart() {
     return { plannedByMonth: planned, completedByMonth: completed };
   }, [schedules, orders, selectedYear]);
 
+  // Overall completion rate for the whole selected year (sum of months)
+  const overallCompletionRate = useMemo(() => {
+    const totalPlanned = plannedByMonth.reduce((sum, val) => sum + val, 0);
+    const totalCompleted = completedByMonth.reduce((sum, val) => sum + val, 0);
+    return totalPlanned === 0 ? 0 : Math.round((totalCompleted / totalPlanned) * 100);
+  }, [plannedByMonth, completedByMonth]);
+
   const options: ApexOptions = {
     colors: ["#465fff", "#12B76A"],
     chart: {
@@ -137,11 +145,35 @@ export default function MonthlySalesChart() {
     },
 
     tooltip: {
-      x: {
-        show: false,
-      },
-      y: {
-        formatter: (val: number) => `${val} action(s)`,
+      shared: true,
+      intersect: false,
+      custom: ({ series, dataPointIndex, w }: { series: number[][]; dataPointIndex: number; w: any }) => {
+        const planned = series[0]?.[dataPointIndex] ?? 0;
+        const completedVal = series[1]?.[dataPointIndex] ?? 0;
+        const rate = planned === 0 ? 0 : Math.round((completedVal / planned) * 100);
+        const monthLabel = w.globals.labels[dataPointIndex];
+        return `
+          <div style="min-width:190px;padding:12px 14px;font-family:Outfit, sans-serif;background:#fff;border-radius:8px;">
+            <div style="font-weight:600;font-size:13px;color:#1D2939;margin-bottom:8px;">${monthLabel} ${selectedYear}</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#475467;">
+                <span style="width:8px;height:8px;border-radius:9999px;background:#465fff;display:inline-block;"></span>
+                Planned
+              </span>
+              <span style="font-weight:600;font-size:13px;color:#1D2939;">${planned}</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;color:#475467;">
+                <span style="width:8px;height:8px;border-radius:9999px;background:#12B76A;display:inline-block;"></span>
+                Completed
+              </span>
+              <span style="font-weight:600;font-size:13px;color:#1D2939;">${completedVal}</span>
+            </div>
+            <div style="border-top:1px solid #EAECF0;padding-top:6px;font-size:11.5px;color:#667085;">
+              Completion rate ${rate}%
+            </div>
+          </div>
+        `;
       },
     },
   };
@@ -155,9 +187,14 @@ export default function MonthlySalesChart() {
     <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white px-5 pt-5 dark:border-gray-800 dark:bg-white/[0.03] sm:px-6 sm:pt-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">
-            Monthly Preventive Plan vs Completed
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-white/90">
+              Monthly Preventive Plan vs Completed
+            </h3>
+            <Badge size="sm" color={overallCompletionRate >= 80 ? "success" : overallCompletionRate >= 50 ? "primary" : "warning"}>
+              {overallCompletionRate}% completion rate
+            </Badge>
+          </div>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
             Scheduled actions compared to what was completed, per month
           </p>

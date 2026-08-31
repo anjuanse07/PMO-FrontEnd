@@ -7,6 +7,14 @@ export type MachineRecord = {
   kategori: "MTC" | "UTY" | "BLD";
 };
 
+export type TechnicianRecord = {
+  technician_name: string;
+  role: string;
+  detail_technician_role: string;
+  technician_main_sub: string;
+  technician_child_sub: string;
+};
+
 export type ScheduleRecord = {
   id: number;
   machine_no: number;
@@ -58,6 +66,14 @@ export type ApprovedOrderRecord = {
   status: "In Progress" | "Approval" | "Completed";
   approved_by_manager_date: string | null;
   approved_by_manager_user?: string | null;
+  // Three-stage sign-off: Technician -> Machine User / PIC -> Engineering.
+  // Engineering is the final stage; once set, the record is locked from further edits.
+  approved_by_technician_date?: string | null;
+  approved_by_technician_user?: string | null;
+  approved_by_pic_date?: string | null;
+  approved_by_pic_user?: string | null;
+  approved_by_engineering_date?: string | null;
+  approved_by_engineering_user?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -190,6 +206,15 @@ export async function fetchMachines(): Promise<MachineRecord[]> {
   return response.json();
 }
 
+export async function fetchTechnicians(): Promise<TechnicianRecord[]> {
+  const response = await fetch(`${API_BASE}/api/technicians`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch technicians list");
+  }
+
+  return response.json();
+}
+
 export async function fetchPreventiveTypes(): Promise<PreventiveTypeRecord[]> {
   const response = await fetch(`${API_BASE}/api/preventive-types`);
   if (!response.ok) {
@@ -294,7 +319,24 @@ export async function createApprovedOrder(payload: Omit<ApprovedOrderRecord, "id
 
 export async function updateApprovedOrder(
   id: number,
-  payload: Partial<Pick<ApprovedOrderRecord, "preventive_date" | "execution_date" | "start_clock" | "end_clock" | "technician_name" | "status">>,
+  payload: Partial<
+    Pick<
+      ApprovedOrderRecord,
+      | "machine_asset"
+      | "preventive_date"
+      | "execution_date"
+      | "start_clock"
+      | "end_clock"
+      | "technician_name"
+      | "status"
+      | "approved_by_technician_date"
+      | "approved_by_technician_user"
+      | "approved_by_pic_date"
+      | "approved_by_pic_user"
+      | "approved_by_engineering_date"
+      | "approved_by_engineering_user"
+    >
+  >,
 ) {
   const response = await fetch(`${API_BASE}/api/approved-orders/${id}`, {
     method: "PATCH",

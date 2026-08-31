@@ -13,7 +13,17 @@ import {
 } from "../components/ui/table";
 import Badge from "../components/ui/badge/Badge";
 import { type MaintenanceOrder } from "../data/preventiveMaintenanceData";
-import { fetchApprovedOrders, fetchMachineParameters, fetchOrderResults, saveOrderResults, updateApprovedOrder, type MachineParameterRecord } from "../services/pmoApi";
+import {
+  fetchApprovedOrders,
+  fetchMachineParameters,
+  fetchOrderResults,
+  saveOrderResults,
+  updateApprovedOrder,
+  fetchTechnicians,
+  type MachineParameterRecord,
+  type TechnicianRecord,
+  type ApprovedOrderRecord,
+} from "../services/pmoApi";
 
 type ChecklistRow = {
   parameterId: number;
@@ -59,19 +69,42 @@ type OrderSortColumn =
   | "status";
 type OrderSortDirection = "asc" | "desc";
 
-const emptyApproval = {
-  technicianName: "",
-  userName: "",
-  engineeringSupervisorName: "",
-  technicianDateTime: "",
-  userDateTime: "",
-  engineeringSupervisorDateTime: "",
+type ApprovalStage = {
+  approved: boolean;
+  approvedBy: string;
+  approvedAt: string; // ISO timestamp
 };
+
+type Approvals = {
+  technician: ApprovalStage;
+  user: ApprovalStage; // Machine User / PIC
+  engineering: ApprovalStage;
+};
+
+const emptyApprovalStage = (): ApprovalStage => ({ approved: false, approvedBy: "", approvedAt: "" });
+const emptyApprovals = (): Approvals => ({
+  technician: emptyApprovalStage(),
+  user: emptyApprovalStage(),
+  engineering: emptyApprovalStage(),
+});
+
+const approvalStageMeta: { key: keyof Approvals; label: string; description: string }[] = [
+  { key: "technician", label: "Technician", description: "Confirms the checklist was carried out as recorded." },
+  { key: "user", label: "Machine User / PIC", description: "Confirms the results on behalf of the machine's user/PIC." },
+  { key: "engineering", label: "Engineering", description: "Final sign-off. Locks the record from further edits." },
+];
 
 export default function PreventiveMaintenanceOrder() {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<MaintenanceOrder | null>(null);
   const [technicians, setTechnicians] = useState<string[]>([""]);
+  const [technicianRoster, setTechnicianRoster] = useState<TechnicianRecord[]>([]);
+  const [technicianSubFilter, setTechnicianSubFilter] = useState<string>("All");
+  const [pendingApprovalStage, setPendingApprovalStage] = useState<keyof Approvals | null>(null);
+  const [approverNameDraft, setApproverNameDraft] = useState("");
+  // Reflects the backend record's engineering sign-off, not the in-progress draft —
+  // so confirming Engineering approval doesn't lock the form before Save can persist it.
+  const [isRecordLocked, setIsRecordLocked] = useState(false);
   const [selectedYear, setSelectedYear] = useState<number | "All">("All");
   const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
@@ -85,16 +118,18 @@ export default function PreventiveMaintenanceOrder() {
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
     machineId: "",
+    machineAssetNumber: "",
     machineName: "",
     preventiveDate: "",
     preventiveTimeStart: "08:00",
     preventiveTimeEnd: "10:00",
     department: "",
     checklist: { mechanical: [], electrical: [], utilities: [] } as ChecklistSection,
-    approvals: emptyApproval,
+    approvals: emptyApprovals(),
   });
 
   const [maintenanceOrders, setMaintenanceOrders] = useState<MaintenanceOrder[]>([]);
+  const [approvedOrdersById, setApprovedOrdersById] = useState<Map<string, ApprovedOrderRecord>>(new Map());
   const [machineParameters, setMachineParameters] = useState<MachineParameterRecord[]>([]);
 
   useEffect(() => {
@@ -120,9 +155,11 @@ export default function PreventiveMaintenanceOrder() {
         }));
 
         setMaintenanceOrders(mappedOrders);
+        setApprovedOrdersById(new Map(rows.map((row) => [String(row.id), row])));
       } catch (error) {
         console.error("Failed to load approved orders from backend:", error);
         setMaintenanceOrders([]);
+        setApprovedOrdersById(new Map());
       }
     };
 
@@ -138,6 +175,17 @@ export default function PreventiveMaintenanceOrder() {
     };
 
     void loadMachineParameters();
+
+    const loadTechnicians = async () => {
+      try {
+        const roster = await fetchTechnicians();
+        setTechnicianRoster(roster);
+      } catch (error) {
+        console.error("Failed to load technicians list:", error);
+      }
+    };
+
+    void loadTechnicians();
   }, []);
 
   const departmentOptions = useMemo(
@@ -162,6 +210,21 @@ export default function PreventiveMaintenanceOrder() {
         ),
       ).sort(),
     [maintenanceOrders],
+  );
+
+  // Sub options for the technician picker are derived from the technicians table itself
+  // (BLD, UTY, MTC, SPT, ADM, ...), matching the same sub categories used elsewhere.
+  const technicianSubOptions = useMemo(
+    () => Array.from(new Set(technicianRoster.map((tech) => tech.technician_main_sub).filter(Boolean))).sort(),
+    [technicianRoster],
+  );
+
+  const filteredTechnicianRoster = useMemo(
+    () =>
+      technicianSubFilter === "All"
+        ? technicianRoster
+        : technicianRoster.filter((tech) => tech.technician_main_sub === technicianSubFilter),
+    [technicianRoster, technicianSubFilter],
   );
 
   const handleOrderSort = (column: OrderSortColumn) => {
@@ -273,24 +336,43 @@ export default function PreventiveMaintenanceOrder() {
       }
     }
 
+    // Rehydrate real approval state from the backend record so a re-opened,
+    // already-approved order shows correctly (and stays locked if Engineering signed off).
+    const rawRecord = approvedOrdersById.get(order.id);
+    const approvals: Approvals = {
+      technician: {
+        approved: Boolean(rawRecord?.approved_by_technician_date),
+        approvedBy: rawRecord?.approved_by_technician_user || "",
+        approvedAt: rawRecord?.approved_by_technician_date || "",
+      },
+      user: {
+        approved: Boolean(rawRecord?.approved_by_pic_date),
+        approvedBy: rawRecord?.approved_by_pic_user || "",
+        approvedAt: rawRecord?.approved_by_pic_date || "",
+      },
+      engineering: {
+        approved: Boolean(rawRecord?.approved_by_engineering_date),
+        approvedBy: rawRecord?.approved_by_engineering_user || "",
+        approvedAt: rawRecord?.approved_by_engineering_date || "",
+      },
+    };
+
     setFormData({
       machineId: order.id,
+      machineAssetNumber: order.machineAsset || "",
       machineName: order.machineName,
       preventiveDate: order.preventiveDate,
       preventiveTimeStart: "08:00",
       preventiveTimeEnd: "11:00",
       department: order.department,
       checklist,
-      approvals: {
-        technicianName: order.technician,
-        userName: "",
-        engineeringSupervisorName: "",
-        technicianDateTime: "",
-        userDateTime: "",
-        engineeringSupervisorDateTime: "",
-      },
+      approvals,
     });
     setTechnicians([order.technician]);
+    setTechnicianSubFilter(order.sub || "All");
+    setPendingApprovalStage(null);
+    setApproverNameDraft("");
+    setIsRecordLocked(Boolean(rawRecord?.approved_by_engineering_date));
     setIsOpen(true);
   };
 
@@ -332,18 +414,56 @@ export default function PreventiveMaintenanceOrder() {
     }));
   };
 
-  const updateApproval = (field: keyof typeof emptyApproval, value: string) => {
+  // Engineering is the final stage — once approved AND SAVED, nobody can edit the record anymore.
+  // This intentionally reads from isRecordLocked (persisted backend state) rather than
+  // formData.approvals.engineering.approved (the unsaved draft), otherwise clicking "Confirm"
+  // on the Engineering approval locks the form before Save Record can ever run.
+  const isLocked = isRecordLocked;
+
+  const approvalOrder: (keyof Approvals)[] = ["technician", "user", "engineering"];
+
+  const canApprove = (stage: keyof Approvals) => {
+    if (isLocked) return false;
+    const stageIndex = approvalOrder.indexOf(stage);
+    if (formData.approvals[stage].approved) return false;
+    // Each stage requires every prior stage to already be approved (sequential sign-off).
+    return approvalOrder.slice(0, stageIndex).every((prior) => formData.approvals[prior].approved);
+  };
+
+  const startApproval = (stage: keyof Approvals) => {
+    if (!canApprove(stage)) return;
+    setPendingApprovalStage(stage);
+    setApproverNameDraft(stage === "technician" ? technicians.map((t) => t.trim()).filter(Boolean).join(", ") : "");
+  };
+
+  const cancelApproval = () => {
+    setPendingApprovalStage(null);
+    setApproverNameDraft("");
+  };
+
+  const confirmApproval = () => {
+    if (!pendingApprovalStage) return;
+    const name = approverNameDraft.trim();
+    if (!name) return;
+    const stage = pendingApprovalStage;
     setFormData((prev) => ({
       ...prev,
       approvals: {
         ...prev.approvals,
-        [field]: value,
+        [stage]: {
+          approved: true,
+          approvedBy: name,
+          approvedAt: new Date().toISOString(),
+        },
       },
     }));
+    setPendingApprovalStage(null);
+    setApproverNameDraft("");
   };
 
   const handleSaveRecord = async () => {
     if (!selectedOrder) return;
+    if (isLocked) return; // Engineering has signed off — record is frozen.
     const orderId = Number(selectedOrder.id);
     if (Number.isNaN(orderId)) {
       closeForm();
@@ -351,6 +471,9 @@ export default function PreventiveMaintenanceOrder() {
     }
 
     const techniciansText = technicians.map((name) => name.trim()).filter(Boolean).join(", ");
+    const nextStatus: StatusFilter = formData.approvals.engineering.approved
+      ? "Completed"
+      : "Approval";
     setIsSaving(true);
     try {
       const resultItems = (Object.values(formData.checklist) as ChecklistRow[][])
@@ -362,11 +485,18 @@ export default function PreventiveMaintenanceOrder() {
         }));
 
       await updateApprovedOrder(orderId, {
+        machine_asset: formData.machineAssetNumber,
         preventive_date: formData.preventiveDate || null,
         start_clock: formData.preventiveTimeStart ? `${formData.preventiveTimeStart}:00` : null,
         end_clock: formData.preventiveTimeEnd ? `${formData.preventiveTimeEnd}:00` : null,
         technician_name: techniciansText || null,
-        status: "Approval",
+        status: nextStatus,
+        approved_by_technician_date: formData.approvals.technician.approvedAt || null,
+        approved_by_technician_user: formData.approvals.technician.approvedBy || null,
+        approved_by_pic_date: formData.approvals.user.approvedAt || null,
+        approved_by_pic_user: formData.approvals.user.approvedBy || null,
+        approved_by_engineering_date: formData.approvals.engineering.approvedAt || null,
+        approved_by_engineering_user: formData.approvals.engineering.approvedBy || null,
       });
 
       await saveOrderResults(orderId, resultItems);
@@ -376,13 +506,40 @@ export default function PreventiveMaintenanceOrder() {
           order.id === selectedOrder.id
             ? {
                 ...order,
+                machineAsset: formData.machineAssetNumber || order.machineAsset,
                 preventiveDate: formData.preventiveDate,
                 technician: techniciansText || order.technician,
-                status: "Approval",
+                status: nextStatus,
               }
             : order,
         ),
       );
+
+      setApprovedOrdersById((prev) => {
+        const next = new Map(prev);
+        const existing = next.get(selectedOrder.id);
+        if (existing) {
+          next.set(selectedOrder.id, {
+            ...existing,
+            machine_asset: formData.machineAssetNumber || existing.machine_asset,
+            preventive_date: formData.preventiveDate || null,
+            technician_name: techniciansText || existing.technician_name,
+            status: nextStatus,
+            approved_by_technician_date: formData.approvals.technician.approvedAt || null,
+            approved_by_technician_user: formData.approvals.technician.approvedBy || null,
+            approved_by_pic_date: formData.approvals.user.approvedAt || null,
+            approved_by_pic_user: formData.approvals.user.approvedBy || null,
+            approved_by_engineering_date: formData.approvals.engineering.approvedAt || null,
+            approved_by_engineering_user: formData.approvals.engineering.approvedBy || null,
+          });
+        }
+        return next;
+      });
+
+      if (formData.approvals.engineering.approved) {
+        setIsRecordLocked(true);
+      }
+
       closeForm();
     } catch (error) {
       alert(error instanceof Error ? error.message : "Failed to save preventive order.");
@@ -638,13 +795,35 @@ export default function PreventiveMaintenanceOrder() {
           </div>
 
           <div className="space-y-6">
+            {isLocked && (
+              <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400">
+                <span className="font-semibold">Locked:</span>
+                <span>
+                  Approved by Engineering ({formData.approvals.engineering.approvedBy}) on{" "}
+                  {new Date(formData.approvals.engineering.approvedAt).toLocaleString()}. This record can no longer be edited.
+                </span>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
                 <span>Machine ID</span>
                 <input
                   value={formData.machineId}
+                  disabled={isLocked}
                   onChange={(e) => setFormData((prev) => ({ ...prev, machineId: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
+                />
+              </label>
+
+              <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+                <span>Machine Asset Number</span>
+                <input
+                  value={formData.machineAssetNumber}
+                  disabled={isLocked}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, machineAssetNumber: e.target.value }))}
+                  placeholder="e.g. AST-00123"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                 />
               </label>
 
@@ -652,8 +831,9 @@ export default function PreventiveMaintenanceOrder() {
                 <span>Machine Name</span>
                 <input
                   value={formData.machineName}
+                  disabled={isLocked}
                   onChange={(e) => setFormData((prev) => ({ ...prev, machineName: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                 />
               </label>
 
@@ -662,8 +842,9 @@ export default function PreventiveMaintenanceOrder() {
                 <input
                   type="date"
                   value={formData.preventiveDate}
+                  disabled={isLocked}
                   onChange={(e) => setFormData((prev) => ({ ...prev, preventiveDate: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                 />
               </label>
 
@@ -672,8 +853,9 @@ export default function PreventiveMaintenanceOrder() {
                 <input
                   type="time"
                   value={formData.preventiveTimeStart}
+                  disabled={isLocked}
                   onChange={(e) => setFormData((prev) => ({ ...prev, preventiveTimeStart: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                 />
               </label>
 
@@ -682,8 +864,9 @@ export default function PreventiveMaintenanceOrder() {
                 <input
                   type="time"
                   value={formData.preventiveTimeEnd}
+                  disabled={isLocked}
                   onChange={(e) => setFormData((prev) => ({ ...prev, preventiveTimeEnd: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                 />
               </label>
 
@@ -691,39 +874,70 @@ export default function PreventiveMaintenanceOrder() {
                 <span>Department</span>
                 <input
                   value={formData.department}
+                  disabled={isLocked}
                   onChange={(e) => setFormData((prev) => ({ ...prev, department: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                 />
               </label>
             </div>
 
             <div className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Technician Names</h3>
-                <button
-                  type="button"
-                  onClick={addTechnician}
-                  disabled={technicians.length >= 7}
-                  className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-300"
-                >
-                  Add Technician
-                </button>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                    <span>Filter by Sub</span>
+                    <select
+                      value={technicianSubFilter}
+                      onChange={(e) => setTechnicianSubFilter(e.target.value)}
+                      disabled={isLocked}
+                      className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs text-gray-700 outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                    >
+                      <option value="All">All</option>
+                      {technicianSubOptions.map((sub) => (
+                        <option key={sub} value={sub}>
+                          {sub}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={addTechnician}
+                    disabled={technicians.length >= 7 || isLocked}
+                    className="rounded-md bg-brand-500 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-300"
+                  >
+                    Add Technician
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {technicians.map((tech, index) => (
                   <div key={index} className="flex items-center gap-2">
-                    <input
+                    <select
                       value={tech}
                       onChange={(e) => updateTechnician(index, e.target.value)}
-                      placeholder={`Technician ${index + 1}`}
-                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                    />
+                      disabled={isLocked}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
+                    >
+                      <option value="">{`Select Technician ${index + 1}`}</option>
+                      {/* Keep a previously saved name selectable even if it falls outside the current sub filter */}
+                      {tech && !filteredTechnicianRoster.some((t) => t.technician_name === tech) && (
+                        <option value={tech}>{tech}</option>
+                      )}
+                      {filteredTechnicianRoster.map((t) => (
+                        <option key={t.technician_name} value={t.technician_name}>
+                          {t.technician_name} — {t.technician_main_sub}
+                        </option>
+                      ))}
+                    </select>
                     {technicians.length > 1 && (
                       <button
                         type="button"
                         onClick={() => removeTechnician(index)}
-                        className="rounded-lg border border-red-200 px-2 py-2 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"
+                        disabled={isLocked}
+                        className="rounded-lg border border-red-200 px-2 py-2 text-xs text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-400"
                       >
                         Remove
                       </button>
@@ -749,7 +963,14 @@ export default function PreventiveMaintenanceOrder() {
                     </h3>
 
                     <div className="overflow-x-auto">
-                      <table className="min-w-full border-separate border-spacing-0 text-left">
+                      <table className="w-full table-fixed border-separate border-spacing-0 text-left">
+                        <colgroup>
+                          <col className="w-[22%]" />
+                          <col className="w-[26%]" />
+                          <col className="w-[18%]" />
+                          <col className="w-[17%]" />
+                          <col className="w-[17%]" />
+                        </colgroup>
                         <thead>
                           <tr className="bg-gray-50 dark:bg-gray-800/60">
                             <th className="border border-gray-200 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600 dark:border-gray-700 dark:text-gray-300">
@@ -772,51 +993,22 @@ export default function PreventiveMaintenanceOrder() {
                         <tbody>
                           {(sectionRows as ChecklistRow[]).map((row, rowIndex) => (
                             <tr key={`${sectionKey}-${rowIndex}`}>
-                              <td className="border border-gray-200 px-3 py-2 align-top dark:border-gray-700">
-                                <input
-                                  value={row.item}
-                                  onChange={(e) =>
-                                    updateChecklistValue(
-                                      sectionKey as keyof ChecklistSection,
-                                      rowIndex,
-                                      "item",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                                />
+                              {/* Checklist, Action, and Standard come from the machine template — shown as
+                                  wrapped, full-sentence text instead of a single-line input that clips them. */}
+                              <td className="border border-gray-200 px-3 py-2 align-top text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                                <p className="whitespace-normal break-words">{row.item}</p>
+                              </td>
+                              <td className="border border-gray-200 px-3 py-2 align-top text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                                <p className="whitespace-normal break-words">{row.action}</p>
+                              </td>
+                              <td className="border border-gray-200 px-3 py-2 align-top text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300">
+                                <p className="whitespace-normal break-words">{row.standard}</p>
                               </td>
                               <td className="border border-gray-200 px-3 py-2 align-top dark:border-gray-700">
-                                <input
-                                  value={row.action}
-                                  onChange={(e) =>
-                                    updateChecklistValue(
-                                      sectionKey as keyof ChecklistSection,
-                                      rowIndex,
-                                      "action",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                                />
-                              </td>
-                              <td className="border border-gray-200 px-3 py-2 align-top dark:border-gray-700">
-                                <input
-                                  value={row.standard}
-                                  onChange={(e) =>
-                                    updateChecklistValue(
-                                      sectionKey as keyof ChecklistSection,
-                                      rowIndex,
-                                      "standard",
-                                      e.target.value,
-                                    )
-                                  }
-                                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                                />
-                              </td>
-                              <td className="border border-gray-200 px-3 py-2 align-top dark:border-gray-700">
-                                <input
+                                <textarea
                                   value={row.result}
+                                  disabled={isLocked}
+                                  rows={2}
                                   onChange={(e) =>
                                     updateChecklistValue(
                                       sectionKey as keyof ChecklistSection,
@@ -825,12 +1017,14 @@ export default function PreventiveMaintenanceOrder() {
                                       e.target.value,
                                     )
                                   }
-                                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                                  className="w-full resize-y whitespace-normal break-words rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                                 />
                               </td>
                               <td className="border border-gray-200 px-3 py-2 align-top dark:border-gray-700">
-                                <input
+                                <textarea
                                   value={row.justification}
+                                  disabled={isLocked}
+                                  rows={2}
                                   onChange={(e) =>
                                     updateChecklistValue(
                                       sectionKey as keyof ChecklistSection,
@@ -839,7 +1033,7 @@ export default function PreventiveMaintenanceOrder() {
                                       e.target.value,
                                     )
                                   }
-                                  className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                                  className="w-full resize-y whitespace-normal break-words rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
                                 />
                               </td>
                             </tr>
@@ -858,50 +1052,55 @@ export default function PreventiveMaintenanceOrder() {
               </h3>
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-                  <span>Technician Name</span>
-                  <input
-                    value={formData.approvals.technicianName}
-                    onChange={(e) => updateApproval("technicianName", e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  />
-                  <input
-                    type="datetime-local"
-                    value={formData.approvals.technicianDateTime}
-                    onChange={(e) => updateApproval("technicianDateTime", e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  />
-                </label>
+                {approvalStageMeta.map((stage) => {
+                  const stageState = formData.approvals[stage.key];
+                  const isPending = pendingApprovalStage === stage.key;
+                  return (
+                    <div
+                      key={stage.key}
+                      className="flex flex-col justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-700"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-gray-800 dark:text-white">{stage.label}</p>
+                        <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{stage.description}</p>
+                      </div>
 
-                <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-                  <span>User Name</span>
-                  <input
-                    value={formData.approvals.userName}
-                    onChange={(e) => updateApproval("userName", e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  />
-                  <input
-                    type="datetime-local"
-                    value={formData.approvals.userDateTime}
-                    onChange={(e) => updateApproval("userDateTime", e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  />
-                </label>
-
-                <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-                  <span>Engineering Supervisor</span>
-                  <input
-                    value={formData.approvals.engineeringSupervisorName}
-                    onChange={(e) => updateApproval("engineeringSupervisorName", e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  />
-                  <input
-                    type="datetime-local"
-                    value={formData.approvals.engineeringSupervisorDateTime}
-                    onChange={(e) => updateApproval("engineeringSupervisorDateTime", e.target.value)}
-                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  />
-                </label>
+                      {stageState.approved ? (
+                        <div className="rounded-md bg-green-50 px-3 py-2 text-xs text-green-700 dark:bg-green-900/20 dark:text-green-400">
+                          <p className="font-medium">Approved by {stageState.approvedBy}</p>
+                          <p className="mt-0.5">{new Date(stageState.approvedAt).toLocaleString()}</p>
+                        </div>
+                      ) : isPending ? (
+                        <div className="space-y-2">
+                          <input
+                            autoFocus
+                            value={approverNameDraft}
+                            onChange={(e) => setApproverNameDraft(e.target.value)}
+                            placeholder="Type your name to confirm"
+                            className="w-full rounded-md border border-gray-300 bg-white px-2 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                          />
+                          <div className="flex gap-2">
+                            <Button size="sm" onClick={confirmApproval} disabled={!approverNameDraft.trim()}>
+                              Confirm
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={cancelApproval}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => startApproval(stage.key)}
+                          disabled={!canApprove(stage.key)}
+                        >
+                          Approve
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -910,8 +1109,8 @@ export default function PreventiveMaintenanceOrder() {
             <Button variant="outline" onClick={closeForm}>
               Close
             </Button>
-            <Button onClick={() => void handleSaveRecord()} disabled={isSaving}>
-              {isSaving ? "Saving..." : "Save Record"}
+            <Button onClick={() => void handleSaveRecord()} disabled={isSaving || isLocked}>
+              {isLocked ? "Locked" : isSaving ? "Saving..." : "Save Record"}
             </Button>
           </div>
         </div>
