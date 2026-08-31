@@ -327,7 +327,7 @@ export default function YearlyScheduleMatrix() {
                 {tab.label}
               </button>
             ))}
-            <button
+            {/* <button
               onClick={() => setActiveTab("Dashboard")}
               className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
                 activeTab === "Dashboard"
@@ -336,7 +336,7 @@ export default function YearlyScheduleMatrix() {
               }`}
             >
               Progress Dashboard
-            </button>
+            </button> */}
           </div>
 
           {activeTab !== "Dashboard" && (

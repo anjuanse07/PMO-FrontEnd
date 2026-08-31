@@ -56,6 +56,11 @@ interface YearlyProgressDashboardProps {
   orders?: ApprovedOrderRecord[];
   isLoading?: boolean;
   title?: string;
+  /** Show the "Monthly Completion Breakdown" table. Default true.
+   *  Set false when it's rendered separately elsewhere on the page
+   *  (e.g. next to YearlyScheduleMatrixPreview in Home.tsx) to avoid
+   *  showing it twice. */
+  showBreakdown?: boolean;
 }
 
 export default function YearlyProgressDashboard({
@@ -66,6 +71,7 @@ export default function YearlyProgressDashboard({
   orders: ordersProp,
   isLoading: isLoadingProp,
   title = "Preventive Maintenance Progress",
+  showBreakdown = true,
 }: YearlyProgressDashboardProps) {
   const isControlled = machinesProp !== undefined && schedulesProp !== undefined && ordersProp !== undefined;
 
@@ -288,6 +294,7 @@ export default function YearlyProgressDashboard({
         })}
       </div>
 
+      {showBreakdown && (
       <ComponentCard title="Monthly Completion Breakdown">
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-xs">
@@ -358,6 +365,7 @@ export default function YearlyProgressDashboard({
           </table>
         </div>
       </ComponentCard>
+      )}
     </div>
   );
 }

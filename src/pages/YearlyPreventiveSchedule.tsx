@@ -474,7 +474,7 @@ export default function YearlyPreventiveSchedule() {
           department: entry.department,
           location: entry.location || null,
           approved_by_engineering_date: new Date().toISOString(),
-          approved_by_engineering_user: currentUser?.name || currentUser?.nickname,
+          approved_by_engineering_user: currentUser?.nickname || currentUser?.name,
         },
         currentUser?.role,
       );
@@ -484,7 +484,7 @@ export default function YearlyPreventiveSchedule() {
           ? {
               ...plan,
               status: "Approved by Engineering" as const,
-              approvedByEngineeringUser: currentUser?.name || currentUser?.nickname || null,
+              approvedByEngineeringUser: currentUser?.nickname || currentUser?.name || null,
             }
           : plan,
       );
@@ -519,7 +519,7 @@ export default function YearlyPreventiveSchedule() {
           department: entry.department,
           location: entry.location || null,
           approved_by_manager_date: approvedAt,
-          approved_by_manager_user: currentUser?.name || currentUser?.nickname,
+          approved_by_manager_user: currentUser?.nickname || currentUser?.name,
         },
         currentUser?.role,
       );
@@ -542,7 +542,7 @@ export default function YearlyPreventiveSchedule() {
         technician_name: "Planner",
         status: "In Progress",
         approved_by_manager_date: approvedAt,
-        approved_by_manager_user: currentUser?.name || currentUser?.nickname,
+        approved_by_manager_user: currentUser?.nickname || currentUser?.name,
       });
 
       const updated = plans.map((plan) =>
@@ -550,7 +550,7 @@ export default function YearlyPreventiveSchedule() {
           ? {
               ...plan,
               status: "Approved by Manager" as const,
-              approvedByManagerUser: currentUser?.name || currentUser?.nickname || null,
+              approvedByManagerUser: currentUser?.nickname || currentUser?.name || null,
             }
           : plan,
       );
