@@ -48,7 +48,6 @@ const monthAbbrev = [
 ];
 
 const WEEKS_PER_MONTH = 5;
-const yearOptions = [2025, 2026, 2027];
 
 const subTabs: { key: MachineSub; label: string }[] = [
   { key: "BLD", label: "BLD" },
@@ -81,7 +80,8 @@ const splitTypes = (raw: string | null | undefined): string[] =>
 const cellKey = (month: number, week: number) => `${month}-${week}`;
 
 export default function YearlyScheduleMatrix() {
-  const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
   const [activeTab, setActiveTab] = useState<TabKey>("UTY");
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
@@ -112,6 +112,26 @@ export default function YearlyScheduleMatrix() {
 
     void loadAll();
   }, []);
+
+  // Year filter reflects whatever years actually have schedule or order data,
+  // plus the current year and the selected year, so the dropdown is never
+  // empty and never loses a valid selection.
+  const yearOptions = useMemo(() => {
+    const years = new Set<number>();
+    schedules.forEach((sched) => years.add(sched.tahun));
+    orders.forEach((order) => years.add(order.year));
+    years.add(new Date().getFullYear());
+    years.add(selectedYear);
+    return Array.from(years).sort((a, b) => a - b);
+  }, [schedules, orders, selectedYear]);
+
+  // Which month columns the matrix table renders: all 12 for "All", or just
+  // the one selected month, so picking a month narrows the table instead of
+  // just filtering rows.
+  const monthsToShow = useMemo(
+    () => (selectedMonth === "All" ? Array.from({ length: 12 }, (_, i) => i) : [selectedMonth]),
+    [selectedMonth],
+  );
 
   // machine list, grouped by sub (BLD / UTY / MTC), keyed by machine no
   const machinesBySub = useMemo(() => {
@@ -216,7 +236,7 @@ export default function YearlyScheduleMatrix() {
   // Reset to page 1 whenever the filtered row set changes underneath the table
   useEffect(() => {
     setCurrentMatrixPage(1);
-  }, [activeTab, selectedYear, searchText]);
+  }, [activeTab, selectedYear, selectedMonth, searchText]);
 
   const matrixPageCount = Math.max(1, Math.ceil(currentMachines.length / MATRIX_ROWS_PAGE_SIZE));
 
@@ -299,8 +319,24 @@ export default function YearlyScheduleMatrix() {
               </select>
             </label>
 
+            <label className="text-sm text-gray-700 dark:text-gray-300">
+              <span className="mb-2 block">Month</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value === "All" ? "All" : Number(e.target.value))}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+              >
+                <option value="All">Full Year</option>
+                {monthAbbrev.map((month, index) => (
+                  <option key={month} value={index}>
+                    {month}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             {activeTab !== "Dashboard" && (
-              <label className="text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+              <label className="text-sm text-gray-700 dark:text-gray-300 md:col-span-1">
                 <span className="mb-2 block">Search machines</span>
                 <input
                   type="text"
@@ -356,7 +392,9 @@ export default function YearlyScheduleMatrix() {
         </ComponentCard>
 
         {activeTab !== "Dashboard" ? (
-          <ComponentCard title={`${activeTab} - Yearly Matrix (${selectedYear})`}>
+          <ComponentCard
+            title={`${activeTab} - Matrix (${selectedMonth === "All" ? "Full Year" : monthAbbrev[selectedMonth]} ${selectedYear})`}
+          >
             <div className="mb-3 text-sm text-gray-600 dark:text-gray-300">
               {dashboardStats.perSub[activeTab].completed} of{" "}
               {dashboardStats.perSub[activeTab].scheduled} scheduled entries completed (
@@ -389,18 +427,18 @@ export default function YearlyScheduleMatrix() {
                     >
                       Location
                     </th>
-                    {monthAbbrev.map((month) => (
+                    {monthsToShow.map((month) => (
                       <th
                         key={month}
                         colSpan={WEEKS_PER_MONTH}
                         className="sticky top-0 z-20 border border-gray-200 bg-gray-50 px-1 py-1 text-center text-gray-700 dark:border-white/[0.05] dark:bg-gray-800 dark:text-gray-200"
                       >
-                        {month}
+                        {monthAbbrev[month]}
                       </th>
                     ))}
                   </tr>
                   <tr>
-                    {monthAbbrev.flatMap((month) =>
+                    {monthsToShow.flatMap((month) =>
                       Array.from({ length: WEEKS_PER_MONTH }, (_, i) => (
                         <th
                           key={`${month}-w${i + 1}`}
@@ -434,7 +472,7 @@ export default function YearlyScheduleMatrix() {
                       >
                         {machine.location}
                       </td>
-                      {Array.from({ length: 12 }, (_, month) =>
+                      {monthsToShow.map((month) =>
                         Array.from({ length: WEEKS_PER_MONTH }, (_, i) => {
                           const week = i + 1;
                           const cell = matrix.get(machine.machineId)?.get(cellKey(month, week));
@@ -459,7 +497,7 @@ export default function YearlyScheduleMatrix() {
                   ))}
                   {!isLoading && currentMachines.length === 0 && (
                     <tr>
-                      <td colSpan={3 + 12 * WEEKS_PER_MONTH} className="px-4 py-6 text-center text-gray-400">
+                      <td colSpan={3 + monthsToShow.length * WEEKS_PER_MONTH} className="px-4 py-6 text-center text-gray-400">
                         No machines found for {activeTab}.
                       </td>
                     </tr>

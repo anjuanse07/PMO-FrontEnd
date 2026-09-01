@@ -276,13 +276,14 @@ export async function updateScheduleStatus(
   status: "Draft" | "Approved by Engineering" | "Approved by Manager",
   fields?: Partial<ScheduleRecord>,
   currentRole?: string,
+  actorUserId?: number,
 ) {
   const response = await fetch(`${API_BASE}/api/schedules/${id}/status`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ status, current_role: currentRole, ...fields }),
+    body: JSON.stringify({ status, current_role: currentRole, actor_user_id: actorUserId, ...fields }),
   });
 
   if (!response.ok) {
@@ -383,6 +384,33 @@ export type UserRecord = {
   phone: string | null;
   role: string;
 };
+
+export type AuditLogRecord = {
+  id: number;
+  user_id: number | null;
+  nickname: string | null;
+  user_name: string | null;
+  session_id: string | null;
+  event_type: string;
+  entity_type: string | null;
+  entity_id: string | null;
+  page_path: string | null;
+  action_label: string | null;
+  metadata: unknown;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string;
+};
+
+export async function fetchAuditLogs(role: string): Promise<AuditLogRecord[]> {
+  const params = new URLSearchParams({ role, limit: "200" });
+  const response = await fetch(`${API_BASE}/api/audit-logs?${params}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to fetch audit logs");
+  }
+  return response.json();
+}
 
 export async function updateUser(id: number, payload: UpdateUserPayload): Promise<UserRecord> {
   const response = await fetch(`${API_BASE}/api/users/${id}`, {

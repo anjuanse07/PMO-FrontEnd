@@ -14,9 +14,11 @@ import {
 import {
   createSchedulePlan,
   deleteSchedulePlan,
+  fetchApprovedOrders,
   fetchMachines,
   fetchPreventiveTypes,
   fetchSchedules,
+  type ApprovedOrderRecord,
   type MachineRecord,
   type ScheduleRecord,
   updateScheduleStatus,
@@ -45,8 +47,41 @@ const monthNames = [
 ];
 
 type SortColumn = "machine" | "asset" | "location";
+
+// Formats an ISO date string down to just the date (no time), matching how
+// the Preventive Orders table shows approval dates.
+const formatApprovalDate = (isoDate: string | null | undefined): string | null => {
+  if (!isoDate) return null;
+  const parsed = new Date(isoDate);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toLocaleDateString();
+};
 type SortDirection = "asc" | "desc";
 type ScheduledSortColumn = "asset" | "sub" | "month" | "week" | "type" | "status";
+
+// A schedule entry's raw status only ever reaches "Approved by Manager" -
+// once approved, a linked Approved Order is created and it's that order's
+// own status that later becomes "Completed" (see YearlyScheduleMatrix.tsx,
+// which does the same schedule/order pairing for the matrix view). This
+// derived status folds that "Completed" order-side signal back onto the
+// schedule entry so the tab bar below can offer a genuine Completed tab.
+type ScheduledStatusFilter =
+  | "All"
+  | "Draft"
+  | "Approved by Engineering"
+  | "Approved by Manager"
+  | "Completed";
+
+// Tab bar config for the Scheduled Preventive Entries table (mirrors the
+// segmented-tab pattern used on the Preventive Orders page) - each tab is a
+// quick sub-view into one stage of the schedule's lifecycle, with a live
+// count badge.
+const scheduledStatusTabs: { key: ScheduledStatusFilter; label: string; icon: string }[] = [
+  { key: "All", label: "All Orders", icon: "📋" },
+  { key: "Draft", label: "Draft", icon: "🧑‍💼" },
+  { key: "Approved by Engineering", label: "Approved by Engineering", icon: "🛠️" },
+  { key: "Approved by Manager", label: "Approved by Manager", icon: "🛠️" },
+  { key: "Completed", label: "Completed", icon: "✅" },
+];
 
 export default function YearlyPreventiveSchedule() {
   const [selectedSub, setSelectedSub] = useState<MachineSub>("UTY");
@@ -65,15 +100,17 @@ export default function YearlyPreventiveSchedule() {
   const [preventiveTypes, setPreventiveTypes] = useState<
     Array<{ id: number; abbreviation: string; parameter: string }>
   >([]);
+  // Approved Orders, fetched purely to detect which "Approved by Manager"
+  // schedule entries already have a Completed order behind them, so the
+  // Scheduled Preventive Entries table can offer a real "Completed" tab.
+  const [approvedOrders, setApprovedOrders] = useState<ApprovedOrderRecord[]>([]);
 
   // Scheduled entries filters
   const [scheduledSubFilter, setScheduledSubFilter] = useState<MachineSub | "All">("All");
   const [scheduledMonthFilter, setScheduledMonthFilter] = useState<number | "All">("All");
   const [scheduledWeekFilter, setScheduledWeekFilter] = useState<number | "All">("All");
   const [scheduledTypeFilter, setScheduledTypeFilter] = useState<PreventiveType | "All">("All");
-  const [scheduledStatusFilter, setScheduledStatusFilter] = useState<
-    "Draft" | "Approved by Engineering" | "Approved by Manager" | "All"
-  >("All");
+  const [scheduledStatusFilter, setScheduledStatusFilter] = useState<ScheduledStatusFilter>("All");
   const [scheduledSearchText, setScheduledSearchText] = useState("");
   const [showApprovedByManager, setShowApprovedByManager] = useState(true);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
@@ -126,7 +163,9 @@ export default function YearlyPreventiveSchedule() {
           preventiveTypes: String(plan.preventive_types).split(",").filter(Boolean) as PreventiveType[],
           status: plan.status,
           approvedByEngineeringUser: plan.approved_by_engineering_user || null,
+          approvedByEngineeringDate: plan.approved_by_engineering_date || null,
           approvedByManagerUser: plan.approved_by_manager_user || null,
+          approvedByManagerDate: plan.approved_by_manager_date || null,
         }));
 
         setPlans(mappedPlans);
@@ -137,6 +176,19 @@ export default function YearlyPreventiveSchedule() {
     };
 
     void loadPlans();
+  }, []);
+
+  useEffect(() => {
+    const loadApprovedOrders = async () => {
+      try {
+        const orders = await fetchApprovedOrders();
+        setApprovedOrders(orders);
+      } catch (error) {
+        console.error("Failed to load approved orders for Completed-status detection:", error);
+      }
+    };
+
+    void loadApprovedOrders();
   }, []);
 
   useEffect(() => {
@@ -466,6 +518,7 @@ export default function YearlyPreventiveSchedule() {
     const numericId = Number(entry.id);
     if (Number.isNaN(numericId)) return;
 
+    const engineeringApprovedAt = new Date().toISOString();
     try {
       await updateScheduleStatus(
         numericId,
@@ -475,10 +528,11 @@ export default function YearlyPreventiveSchedule() {
           machine_asset: entry.machineAsset || entry.machineId,
           department: entry.department,
           location: entry.location || null,
-          approved_by_engineering_date: new Date().toISOString(),
+          approved_by_engineering_date: engineeringApprovedAt,
           approved_by_engineering_user: currentUser?.nickname || currentUser?.name,
         },
         currentUser?.role,
+        currentUser?.id,
       );
 
       const updated = plans.map((plan) =>
@@ -487,6 +541,7 @@ export default function YearlyPreventiveSchedule() {
               ...plan,
               status: "Approved by Engineering" as const,
               approvedByEngineeringUser: currentUser?.nickname || currentUser?.name || null,
+              approvedByEngineeringDate: engineeringApprovedAt,
             }
           : plan,
       );
@@ -524,6 +579,7 @@ export default function YearlyPreventiveSchedule() {
           approved_by_manager_user: currentUser?.nickname || currentUser?.name,
         },
         currentUser?.role,
+        currentUser?.id,
       );
 
       await createApprovedOrder({
@@ -553,6 +609,7 @@ export default function YearlyPreventiveSchedule() {
               ...plan,
               status: "Approved by Manager" as const,
               approvedByManagerUser: currentUser?.nickname || currentUser?.name || null,
+              approvedByManagerDate: approvedAt,
             }
           : plan,
       );
@@ -563,17 +620,38 @@ export default function YearlyPreventiveSchedule() {
     }
   };
 
+  // machine_no-month-week keys for every Completed Approved Order in the
+  // currently selected year - used to upgrade a schedule entry's display
+  // status to "Completed" once its linked order has actually been finished
+  // (same pairing approach as the matrix view in YearlyScheduleMatrix.tsx).
+  const completedOrderKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const order of approvedOrders) {
+      if (order.year !== selectedYear || order.status !== "Completed") continue;
+      keys.add(`${order.machine_no}-${order.month}-${order.week}`);
+    }
+    return keys;
+  }, [approvedOrders, selectedYear]);
+
   const enrichedPlansWithAsset = useMemo(() => {
     return displayPlans.map((plan) => {
       const machine = machineRecords.find((m) => String(m.no) === plan.machineId);
+      const effectiveStatus: ScheduledStatusFilter =
+        plan.status === "Approved by Manager" && completedOrderKeys.has(`${plan.machineId}-${plan.month}-${plan.week}`)
+          ? "Completed"
+          : plan.status;
       return {
         ...plan,
         assetNumber: machine?.kode_mesin || plan.machineId,
+        effectiveStatus,
       };
     });
-  }, [displayPlans, machineRecords]);
+  }, [displayPlans, machineRecords, completedOrderKeys]);
 
-  const filteredScheduledEntries = useMemo(() => {
+  // Every filter except Status/Hide-Completed, shared by both the status tab
+  // counts (below) and the final filteredScheduledEntries list, so the two
+  // never drift out of sync with each other.
+  const baseFilteredScheduledEntries = useMemo(() => {
     let filtered = enrichedPlansWithAsset.filter((plan) => plan.year === selectedYear);
 
     if (scheduledSubFilter !== "All") {
@@ -592,10 +670,6 @@ export default function YearlyPreventiveSchedule() {
       filtered = filtered.filter((plan) => plan.preventiveTypes.includes(scheduledTypeFilter));
     }
 
-    if (scheduledStatusFilter !== "All") {
-      filtered = filtered.filter((plan) => plan.status === scheduledStatusFilter);
-    }
-
     if (!showApprovedByManager) {
       filtered = filtered.filter((plan) => plan.status !== "Approved by Manager");
     }
@@ -611,6 +685,40 @@ export default function YearlyPreventiveSchedule() {
       );
     }
 
+    return filtered;
+  }, [
+    enrichedPlansWithAsset,
+    selectedYear,
+    scheduledSubFilter,
+    scheduledMonthFilter,
+    scheduledWeekFilter,
+    scheduledTypeFilter,
+    showApprovedByManager,
+    scheduledSearchText,
+  ]);
+
+  // How many entries (under the current non-status filters) sit in each
+  // status tab - drives the count badge shown on every tab.
+  const scheduledStatusTabCounts = useMemo(() => {
+    const counts: Record<ScheduledStatusFilter, number> = {
+      All: 0,
+      Draft: 0,
+      "Approved by Engineering": 0,
+      "Approved by Manager": 0,
+      Completed: 0,
+    };
+    for (const plan of baseFilteredScheduledEntries) {
+      counts.All += 1;
+      counts[plan.effectiveStatus] += 1;
+    }
+    return counts;
+  }, [baseFilteredScheduledEntries]);
+
+  const filteredScheduledEntries = useMemo(() => {
+    const filtered = baseFilteredScheduledEntries.filter(
+      (plan) => scheduledStatusFilter === "All" || plan.effectiveStatus === scheduledStatusFilter,
+    );
+
     const sorted = [...filtered].sort((a, b) => {
       let comparison = 0;
       if (scheduledSortColumn === "asset") {
@@ -624,25 +732,13 @@ export default function YearlyPreventiveSchedule() {
       } else if (scheduledSortColumn === "type") {
         comparison = a.preventiveTypes.join(",").localeCompare(b.preventiveTypes.join(","));
       } else if (scheduledSortColumn === "status") {
-        comparison = a.status.localeCompare(b.status);
+        comparison = a.effectiveStatus.localeCompare(b.effectiveStatus);
       }
       return scheduledSortDirection === "asc" ? comparison : -comparison;
     });
 
     return sorted;
-  }, [
-    enrichedPlansWithAsset,
-    selectedYear,
-    scheduledSubFilter,
-    scheduledMonthFilter,
-    scheduledWeekFilter,
-    scheduledTypeFilter,
-    scheduledStatusFilter,
-    showApprovedByManager,
-    scheduledSearchText,
-    scheduledSortColumn,
-    scheduledSortDirection,
-  ]);
+  }, [baseFilteredScheduledEntries, scheduledStatusFilter, scheduledSortColumn, scheduledSortDirection]);
 
   // Entries locked because a manager has already approved them - excluded from bulk selection entirely
   const selectableScheduledEntries = useMemo(
@@ -1066,7 +1162,37 @@ export default function YearlyPreventiveSchedule() {
 
         <ComponentCard title="Scheduled Preventive Entries">
           <div className="mb-6 space-y-4">
-            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-7">
+            <div className="flex flex-wrap gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 dark:border-gray-800 dark:bg-gray-800/40">
+              {scheduledStatusTabs.map((tab) => {
+                const isActive = scheduledStatusFilter === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setScheduledStatusFilter(tab.key)}
+                    className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
+                      isActive
+                        ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700"
+                        : "text-gray-500 hover:bg-white/70 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    <span aria-hidden="true">{tab.icon}</span>
+                    <span>{tab.label}</span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                        isActive
+                          ? "bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300"
+                          : "bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                      }`}
+                    >
+                      {scheduledStatusTabCounts[tab.key]}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
               <label className="text-sm text-gray-700 dark:text-gray-300">
                 <span className="mb-2 block text-xs font-semibold">Group</span>
                 <select
@@ -1126,20 +1252,6 @@ export default function YearlyPreventiveSchedule() {
                       {type.abbreviation}
                     </option>
                   ))}
-                </select>
-              </label>
-
-              <label className="text-sm text-gray-700 dark:text-gray-300">
-                <span className="mb-2 block text-xs font-semibold">Status</span>
-                <select
-                  value={scheduledStatusFilter}
-                  onChange={(e) => setScheduledStatusFilter(e.target.value as typeof scheduledStatusFilter)}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                >
-                  <option value="All">All Status</option>
-                  <option value="Draft">Draft</option>
-                  <option value="Approved by Engineering">Approved by Engineering</option>
-                  <option value="Approved by Manager">Approved by Manager</option>
                 </select>
               </label>
 
@@ -1267,22 +1379,32 @@ export default function YearlyPreventiveSchedule() {
                         <Badge
                           size="sm"
                           color={
-                            entry.status === "Approved by Manager"
+                            entry.effectiveStatus === "Completed" || entry.effectiveStatus === "Approved by Manager"
                               ? "success"
-                              : entry.status === "Approved by Engineering"
+                              : entry.effectiveStatus === "Approved by Engineering"
                                 ? "primary"
                                 : "warning"
                           }
                         >
-                          {entry.status}
+                          {entry.effectiveStatus}
                         </Badge>
                         {(entry.approvedByEngineeringUser || entry.approvedByManagerUser) && (
                           <div className="mt-1 space-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
                             {entry.approvedByEngineeringUser && (
-                              <div>Engineering: {entry.approvedByEngineeringUser}</div>
+                              <div>
+                                Engineering: {entry.approvedByEngineeringUser}
+                                {formatApprovalDate(entry.approvedByEngineeringDate)
+                                  ? ` (${formatApprovalDate(entry.approvedByEngineeringDate)})`
+                                  : ""}
+                              </div>
                             )}
                             {entry.approvedByManagerUser && (
-                              <div>Manager: {entry.approvedByManagerUser}</div>
+                              <div>
+                                Manager: {entry.approvedByManagerUser}
+                                {formatApprovalDate(entry.approvedByManagerDate)
+                                  ? ` (${formatApprovalDate(entry.approvedByManagerDate)})`
+                                  : ""}
+                              </div>
                             )}
                           </div>
                         )}

@@ -4,9 +4,16 @@ import Badge from "../ui/badge/Badge";
 import { fetchApprovedOrders, type ApprovedOrderRecord } from "../../services/pmoApi";
 
 /**
- * Counts, for the current year's approved orders, how many have reached each
- * of the 3 sign-off stages (Technician -> Machine User/PIC -> Engineering).
- * Percentages are relative to the total number of orders created this year.
+ * Counts, for the current year's approved orders, how many are sitting at
+ * each of the 3 sign-off gates (Technician -> Machine User/PIC ->
+ * Engineering) RIGHT NOW - each card is an exclusive bucket, not a
+ * cumulative backlog: an order only counts toward one card at a time, based
+ * on the first stage it hasn't cleared yet. E.g. an order that's already
+ * cleared Technician but not User/PIC counts only in "Pending User/PIC
+ * Approval", not in "Pending Technician Approval" too. As a result the
+ * three cards DO sum to (at most) totalOrders, since every non-completed
+ * order sits in exactly one bucket. Percentages are relative to the total
+ * number of orders created this year.
  */
 interface ApprovalStatusMetricsProps {
   /** Year to filter to. Defaults to the current calendar year. */
@@ -37,13 +44,21 @@ export default function ApprovalStatusMetrics({ year, month = "All" }: ApprovalS
     void loadData();
   }, []);
 
-  const { totalOrders, technicianApproved, picApproved, engineeringApproved } = useMemo(() => {
+  const { totalOrders, pendingTechnician, pendingUser, pendingEngineering } = useMemo(() => {
     const scopedOrders = orders.filter((o) => o.year === currentYear && (month === "All" || o.month === month));
+    const isTechnicianDone = (o: ApprovedOrderRecord) => Boolean(o.approved_by_technician_date);
+    const isUserDone = (o: ApprovedOrderRecord) => Boolean(o.approved_by_pic_date);
+    const isEngineeringDone = (o: ApprovedOrderRecord) => Boolean(o.approved_by_engineering_date);
+
     return {
       totalOrders: scopedOrders.length,
-      technicianApproved: scopedOrders.filter((o) => Boolean(o.approved_by_technician_date)).length,
-      picApproved: scopedOrders.filter((o) => Boolean(o.approved_by_pic_date)).length,
-      engineeringApproved: scopedOrders.filter((o) => Boolean(o.approved_by_engineering_date)).length,
+      // Hasn't cleared Technician yet - the first gate. Exclusive: an order
+      // here can't also be counted in User/PIC or Engineering below.
+      pendingTechnician: scopedOrders.filter((o) => !isTechnicianDone(o)).length,
+      // Cleared Technician, but not yet User/PIC.
+      pendingUser: scopedOrders.filter((o) => isTechnicianDone(o) && !isUserDone(o)).length,
+      // Cleared both Technician and User/PIC, but not yet Engineering.
+      pendingEngineering: scopedOrders.filter((o) => isTechnicianDone(o) && isUserDone(o) && !isEngineeringDone(o)).length,
     };
   }, [orders, currentYear, month]);
 
@@ -52,20 +67,20 @@ export default function ApprovalStatusMetrics({ year, month = "All" }: ApprovalS
   const cards = [
     {
       key: "technician",
-      label: "Approved by Technician",
-      count: technicianApproved,
+      label: "Pending Technician Approval",
+      count: pendingTechnician,
       icon: TaskIcon,
     },
     {
       key: "pic",
-      label: "Approved by User",
-      count: picApproved,
+      label: "Pending User/PIC Approval",
+      count: pendingUser,
       icon: TaskIcon,
     },
     {
       key: "engineering",
-      label: "Approved by Engineering",
-      count: engineeringApproved,
+      label: "Pending Engineering Approval",
+      count: pendingEngineering,
       icon: TaskIcon,
     },
   ] as const;
@@ -91,7 +106,7 @@ export default function ApprovalStatusMetrics({ year, month = "All" }: ApprovalS
                   {isLoading ? "--" : card.count.toLocaleString()}
                 </h4>
               </div>
-              <Badge color={percent >= 80 ? "success" : percent >= 50 ? "primary" : "warning"}>
+              <Badge color={percent >= 50 ? "warning" : percent >= 20 ? "primary" : "success"}>
                 {isLoading ? "--" : `${percent}%`} of {totalOrders}
               </Badge>
             </div>

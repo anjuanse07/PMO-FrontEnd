@@ -5,17 +5,18 @@ import { fetchSchedules, type ScheduleRecord } from "../../services/pmoApi";
 
 /**
  * Counts, for the current year's yearly-plan schedule entries, how many are
- * still PENDING at each gate of the PLANNING approval funnel:
+ * sitting at each gate of the PLANNING approval funnel RIGHT NOW:
  *   Draft -> Approved by Engineering -> Approved by Manager
  * (this is the approval flow driven from YearlyPreventiveSchedule.tsx, and
  * is a separate pipeline from the order EXECUTION approvals shown in
  * ApprovalStatusMetrics.tsx: Technician -> User/PIC -> Engineering.)
  *
- * Each card is cumulative, not an exclusive status bucket: "Pending Manager
- * Approval" includes every entry that hasn't reached Manager sign-off yet,
- * including entries still stuck in Draft. As a result the three cards do
- * NOT sum to totalEntries or to 100% - they represent overlapping backlog
- * at each successive gate, not a partition of entries.
+ * Each card is an exclusive bucket, not a cumulative backlog: an entry only
+ * counts toward one card, based on the stage it's currently stuck at.
+ * "Pending Manager Approval" only counts entries that have already cleared
+ * Engineering but not Manager - it does NOT include entries still stuck in
+ * Draft (those count under "Draft (Pending Engineering)" instead). As a
+ * result the three cards sum to (at most) totalEntries.
  *
  * Percentages are relative to the total number of schedule entries created
  * for the selected year (and month, if a specific month is selected via the
@@ -63,9 +64,10 @@ export default function SchedulePlanningStatusMetrics({ year, month = "All" }: S
       // draftCount, since there's no intermediate "in review" status - kept
       // as a separate derivation so it stays correct if one is added later.
       pendingEngineeringCount: yearEntries.filter(isDraft).length,
-      // Entries not yet approved by Manager, regardless of how far along
-      // they are (Draft or Engineering-approved both still count).
-      pendingManagerCount: yearEntries.filter((s) => isDraft(s) || isEngineeringApproved(s)).length,
+      // Exclusive: entries that have already cleared Engineering but not
+      // yet Manager. Does NOT include entries still stuck in Draft - those
+      // are counted under draftCount/pendingEngineeringCount instead.
+      pendingManagerCount: yearEntries.filter(isEngineeringApproved).length,
     };
   }, [schedules, currentYear, month]);
 

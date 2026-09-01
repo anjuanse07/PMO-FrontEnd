@@ -55,7 +55,76 @@ const monthNames = [
   "December",
 ];
 
-type StatusFilter = "All" | "In Progress" | "Approval" | "Completed";
+// Raw status values the backend actually stores on an order record.
+type OrderStatus = "In Progress" | "Approval" | "Completed";
+
+// UI-level status filter. The backend only tracks "Approval" as a single
+// bucket for all three sign-off stages, so the three "Pending ... Approval"
+// options below are derived client-side from which approval date is still
+// missing on the record (see getApprovalStage), not stored directly.
+type StatusFilter =
+  | "All"
+  | "In Progress"
+  | "Pending Technician Approval"
+  | "Pending User/PIC Approval"
+  | "Pending Engineering Approval"
+  | "Completed";
+
+// Tab bar config for the Preventive Orders page (mirrors the "Semua / On
+// Process / ..." tab pattern used elsewhere in the app) - each tab is a
+// quick sub-view into one approval stage, with a live count badge.
+const statusTabs: { key: StatusFilter; label: string; icon: string }[] = [
+  { key: "All", label: "All Orders", icon: "📋" },
+  { key: "In Progress", label: "In Progress", icon: "⏳" },
+  { key: "Pending Technician Approval", label: "Technician Approval", icon: "👷" },
+  { key: "Pending User/PIC Approval", label: "User/PIC Approval", icon: "🧑‍💼" },
+  { key: "Pending Engineering Approval", label: "Engineering Approval", icon: "🛠️" },
+  { key: "Completed", label: "Completed", icon: "✅" },
+];
+
+// Native <input type="date"> requires exactly "YYYY-MM-DD" - anything else
+// (like a full ISO datetime with a time/zone suffix) makes the input render
+// blank even though a value was passed in.
+const toDateInputValue = (raw: string | null | undefined): string => {
+  if (!raw) return "";
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toISOString().slice(0, 10);
+};
+
+// Native <input type="time"> requires "HH:MM" - the backend stores clock
+// values as "HH:MM:SS", so trim the seconds.
+const toTimeInputValue = (raw: string | null | undefined): string => (raw ? raw.slice(0, 5) : "");
+
+// Human-readable date-only display for table cells (not an input value).
+const formatDisplayDate = (raw: string | null | undefined): string => {
+  if (!raw) return "-";
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleDateString();
+};
+
+// The backend only stores a single "Approval" status for every order still
+// going through the 3-stage sign-off. This derives which specific stage
+// (Technician -> User/PIC -> Engineering) an "Approval" order is currently
+// sitting at, using the actual approval date columns on the raw record - so
+// the Status filter can split that one bucket into three. Defined at module
+// scope (taking approvedOrdersById as a parameter) rather than closing over
+// component state, so it's referentially stable and isn't a useMemo/useCallback
+// dependency.
+const getApprovalStage = (
+  order: MaintenanceOrder,
+  approvedOrdersById: Map<string, ApprovedOrderRecord>,
+): StatusFilter | null => {
+  if (order.status !== "Approval") return null;
+  const rawOrder = approvedOrdersById.get(order.id);
+  if (!rawOrder?.approved_by_technician_date) return "Pending Technician Approval";
+  if (!rawOrder?.approved_by_pic_date) return "Pending User/PIC Approval";
+  if (!rawOrder?.approved_by_engineering_date) return "Pending Engineering Approval";
+  // All three stages already signed off - the record should already be
+  // "Completed" by this point, but fall back gracefully just in case.
+  return null;
+};
+
 type OrderSortColumn =
   | "asset"
   | "name"
@@ -232,22 +301,14 @@ export default function PreventiveMaintenanceOrder() {
     [technicianRoster, technicianSubFilter],
   );
 
-  const handleOrderSort = (column: OrderSortColumn) => {
-    if (orderSortColumn === column) {
-      setOrderSortDirection(orderSortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setOrderSortColumn(column);
-      setOrderSortDirection("asc");
-    }
-  };
-
-  const filteredOrders = useMemo(() => {
+  // Every filter except Status/Hide-Completed, shared by both the status
+  // tab counts (below) and the final filteredOrders list, so the two never
+  // drift out of sync with each other.
+  const baseFilteredOrders = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    const filtered = maintenanceOrders.filter((order) => {
+    return maintenanceOrders.filter((order) => {
       const matchesYear = selectedYear === "All" || order.year === selectedYear;
       const matchesMonth = selectedMonth === "All" || order.month === selectedMonth;
-      const matchesStatus = statusFilter === "All" || order.status === statusFilter;
-      const matchesHideCompleted = !hideCompleted || order.status !== "Completed";
       const matchesSub = subFilter === "All" || order.sub === subFilter;
       const matchesDepartment = departmentFilter === "All" || order.department === departmentFilter;
       const matchesType =
@@ -262,7 +323,57 @@ export default function PreventiveMaintenanceOrder() {
         order.id.toLowerCase().includes(query) ||
         order.sub.toLowerCase().includes(query);
 
-      return matchesYear && matchesMonth && matchesStatus && matchesHideCompleted && matchesSub && matchesDepartment && matchesType && matchesWeek && matchesSearch;
+      return matchesYear && matchesMonth && matchesSub && matchesDepartment && matchesType && matchesWeek && matchesSearch;
+    });
+  }, [maintenanceOrders, selectedYear, selectedMonth, subFilter, departmentFilter, typeFilter, weekFilter, searchQuery]);
+
+  // How many orders (under the current non-status filters) sit in each
+  // status tab - drives the count badge shown on every tab.
+  const statusTabCounts = useMemo(() => {
+    const counts: Record<StatusFilter, number> = {
+      All: 0,
+      "In Progress": 0,
+      "Pending Technician Approval": 0,
+      "Pending User/PIC Approval": 0,
+      "Pending Engineering Approval": 0,
+      Completed: 0,
+    };
+    for (const order of baseFilteredOrders) {
+      counts.All += 1;
+      if (order.status === "In Progress") {
+        counts["In Progress"] += 1;
+      } else if (order.status === "Completed") {
+        counts.Completed += 1;
+      } else {
+        const stage = getApprovalStage(order, approvedOrdersById);
+        if (stage) counts[stage] += 1;
+      }
+    }
+    return counts;
+  }, [baseFilteredOrders, approvedOrdersById]);
+
+  const handleOrderSort = (column: OrderSortColumn) => {
+    if (orderSortColumn === column) {
+      setOrderSortDirection(orderSortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setOrderSortColumn(column);
+      setOrderSortDirection("asc");
+    }
+  };
+
+  const filteredOrders = useMemo(() => {
+    const filtered = baseFilteredOrders.filter((order) => {
+      const matchesStatus =
+        statusFilter === "All" ||
+        (statusFilter === "In Progress" || statusFilter === "Completed"
+          ? order.status === statusFilter
+          : getApprovalStage(order, approvedOrdersById) === statusFilter);
+      // The "Hide Completed" checkbox only makes sense while browsing "All" (or
+      // a non-Completed tab, where it's a no-op anyway) - if the person has
+      // explicitly clicked the Completed tab, always show completed orders.
+      const matchesHideCompleted = !hideCompleted || order.status !== "Completed" || statusFilter === "Completed";
+
+      return matchesStatus && matchesHideCompleted;
     });
 
     return [...filtered].sort((a, b) => {
@@ -286,7 +397,7 @@ export default function PreventiveMaintenanceOrder() {
           : String(aVal).localeCompare(String(bVal));
       return orderSortDirection === "asc" ? comparison : -comparison;
     });
-  }, [maintenanceOrders, searchQuery, selectedMonth, selectedYear, statusFilter, hideCompleted, subFilter, departmentFilter, typeFilter, weekFilter, orderSortColumn, orderSortDirection]);
+  }, [baseFilteredOrders, approvedOrdersById, statusFilter, hideCompleted, orderSortColumn, orderSortDirection]);
 
   const openForm = async (order: MaintenanceOrder) => {
     setSelectedOrder(order);
@@ -367,9 +478,9 @@ export default function PreventiveMaintenanceOrder() {
       machineId: order.id,
       machineAssetNumber: order.machineAsset || "",
       machineName: order.machineName,
-      preventiveDate: order.preventiveDate,
-      preventiveTimeStart: "08:00",
-      preventiveTimeEnd: "11:00",
+      preventiveDate: toDateInputValue(rawRecord?.preventive_date ?? order.preventiveDate),
+      preventiveTimeStart: toTimeInputValue(rawRecord?.start_clock) || "08:00",
+      preventiveTimeEnd: toTimeInputValue(rawRecord?.end_clock) || "11:00",
       department: order.department,
       checklist,
       approvals,
@@ -428,8 +539,21 @@ export default function PreventiveMaintenanceOrder() {
 
   const approvalOrder: (keyof Approvals)[] = ["technician", "user", "engineering"];
 
+  // Every checklist row (across all three sections) needs a Result filled in
+  // before Technician approval can happen - an approved form with blank
+  // results isn't a real inspection record.
+  const blankChecklistCount = useMemo(
+    () =>
+      (Object.values(formData.checklist) as ChecklistRow[][]).reduce(
+        (count, rows) => count + rows.filter((row) => !row.result.trim()).length,
+        0,
+      ),
+    [formData.checklist],
+  );
+
   const canApprove = (stage: keyof Approvals) => {
     if (isLocked) return false;
+    if (stage === "technician" && blankChecklistCount > 0) return false;
     const stageIndex = approvalOrder.indexOf(stage);
     if (formData.approvals[stage].approved) return false;
     // Each stage requires every prior stage to already be approved (sequential sign-off).
@@ -437,6 +561,13 @@ export default function PreventiveMaintenanceOrder() {
   };
 
   const startApproval = (stage: keyof Approvals) => {
+    if (stage === "technician" && blankChecklistCount > 0) {
+      alert(
+        `${blankChecklistCount} checklist result${blankChecklistCount === 1 ? " is" : "s are"} still blank. ` +
+          "Please fill in every Result field before the Technician can approve this form.",
+      );
+      return;
+    }
     if (!canApprove(stage)) return;
     setPendingApprovalStage(stage);
     setApproverNameDraft(stage === "technician" ? technicians.map((t) => t.trim()).filter(Boolean).join(", ") : "");
@@ -477,7 +608,7 @@ export default function PreventiveMaintenanceOrder() {
     }
 
     const techniciansText = technicians.map((name) => name.trim()).filter(Boolean).join(", ");
-    const nextStatus: StatusFilter = formData.approvals.engineering.approved
+    const nextStatus: OrderStatus = formData.approvals.engineering.approved
       ? "Completed"
       : "Approval";
     setIsSaving(true);
@@ -511,12 +642,12 @@ export default function PreventiveMaintenanceOrder() {
         prev.map((order) =>
           order.id === selectedOrder.id
             ? {
-                ...order,
-                machineAsset: formData.machineAssetNumber || order.machineAsset,
-                preventiveDate: formData.preventiveDate,
-                technician: techniciansText || order.technician,
-                status: nextStatus,
-              }
+              ...order,
+              machineAsset: formData.machineAssetNumber || order.machineAsset,
+              preventiveDate: formData.preventiveDate,
+              technician: techniciansText || order.technician,
+              status: nextStatus,
+            }
             : order,
         ),
       );
@@ -529,6 +660,8 @@ export default function PreventiveMaintenanceOrder() {
             ...existing,
             machine_asset: formData.machineAssetNumber || existing.machine_asset,
             preventive_date: formData.preventiveDate || null,
+            start_clock: formData.preventiveTimeStart ? `${formData.preventiveTimeStart}:00` : null,
+            end_clock: formData.preventiveTimeEnd ? `${formData.preventiveTimeEnd}:00` : null,
             technician_name: techniciansText || existing.technician_name,
             status: nextStatus,
             approved_by_technician_date: formData.approvals.technician.approvedAt || null,
@@ -572,6 +705,36 @@ export default function PreventiveMaintenanceOrder() {
       <PageBreadcrumb pageTitle="Preventive Maintenance Orders" />
 
       <div className="space-y-6">
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 dark:border-gray-800 dark:bg-gray-800/40">
+          {statusTabs.map((tab) => {
+            const isActive = statusFilter === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setStatusFilter(tab.key)}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700"
+                    : "text-gray-500 hover:bg-white/70 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]"
+                }`}
+              >
+                <span aria-hidden="true">{tab.icon}</span>
+                <span>{tab.label}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    isActive
+                      ? "bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300"
+                      : "bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                  }`}
+                >
+                  {statusTabCounts[tab.key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         <ComponentCard title="Preventive Schedule Filters">
           <div className="grid gap-4 md:grid-cols-4">
             <label className="text-sm text-gray-700 dark:text-gray-300">
@@ -673,18 +836,15 @@ export default function PreventiveMaintenanceOrder() {
             </label>
 
             <label className="text-sm text-gray-700 dark:text-gray-300">
-              <span className="mb-2 block">Status</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+              <span className="mb-2 block">Search Machine / ID</span>
+              <input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search machine or ID"
                 className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              >
-                <option value="All">All Status</option>
-                <option value="In Progress">In Progress</option>
-                <option value="Approval">Approval</option>
-                <option value="Completed">Completed</option>
-              </select>
+              />
             </label>
+
 
             <label className="flex items-end gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
@@ -694,16 +854,6 @@ export default function PreventiveMaintenanceOrder() {
                 className="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800"
               />
               <span className="pb-0.5">Hide Completed</span>
-            </label>
-
-            <label className="text-sm text-gray-700 dark:text-gray-300">
-              <span className="mb-2 block">Search Machine / ID</span>
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search machine or ID"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              />
             </label>
           </div>
         </ComponentCard>
@@ -737,7 +887,32 @@ export default function PreventiveMaintenanceOrder() {
                 </TableHeader>
 
                 <TableBody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                  {filteredOrders.map((order) => (
+                  {filteredOrders.map((order) => {
+                    const rawOrder = approvedOrdersById.get(order.id);
+                    const approvalStages: { label: string; user: string; date: string }[] = [];
+                    if (rawOrder?.approved_by_technician_user) {
+                      approvalStages.push({
+                        label: "Technician",
+                        user: rawOrder.approved_by_technician_user,
+                        date: formatDisplayDate(rawOrder.approved_by_technician_date),
+                      });
+                    }
+                    if (rawOrder?.approved_by_pic_user) {
+                      approvalStages.push({
+                        label: "User/PIC",
+                        user: rawOrder.approved_by_pic_user,
+                        date: formatDisplayDate(rawOrder.approved_by_pic_date),
+                      });
+                    }
+                    if (rawOrder?.approved_by_engineering_user) {
+                      approvalStages.push({
+                        label: "Engineering",
+                        user: rawOrder.approved_by_engineering_user,
+                        date: formatDisplayDate(rawOrder.approved_by_engineering_date),
+                      });
+                    }
+
+                    return (
                     <TableRow key={order.id}>
                       <TableCell className="px-5 py-4 text-start text-theme-sm text-gray-600 dark:text-gray-300">
                         {order.machineAsset || order.machineId}
@@ -761,7 +936,7 @@ export default function PreventiveMaintenanceOrder() {
                         {order.week ? `Week ${order.week}` : "-"}
                       </TableCell>
                       <TableCell className="px-5 py-4 text-start text-theme-sm text-gray-600 dark:text-gray-300">
-                        {order.preventiveDate || "-"}
+                        {formatDisplayDate(order.preventiveDate)}
                       </TableCell>
                       <TableCell className="px-5 py-4 text-start text-theme-sm text-gray-600 dark:text-gray-300">
                         {order.technician}
@@ -779,6 +954,16 @@ export default function PreventiveMaintenanceOrder() {
                         >
                           {order.status}
                         </Badge>
+                        {approvalStages.length > 0 && (
+                          <div className="mt-1 space-y-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                            {approvalStages.map((stage) => (
+                              <div key={stage.label}>
+                                {stage.label}: {stage.user}
+                                {stage.date !== "-" ? ` (${stage.date})` : ""}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell className="px-5 py-4 text-start">
                         <Button
@@ -791,7 +976,8 @@ export default function PreventiveMaintenanceOrder() {
                         </Button>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -1067,6 +1253,13 @@ export default function PreventiveMaintenanceOrder() {
                 Approval Flow
               </h3>
 
+              {blankChecklistCount > 0 && !formData.approvals.technician.approved && (
+                <div className="mb-4 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2 text-xs text-yellow-800 dark:border-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-300">
+                  {blankChecklistCount} checklist result{blankChecklistCount === 1 ? " is" : "s are"} still blank.
+                  Please fill in every Result field before the Technician can approve this form.
+                </div>
+              )}
+
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 {approvalStageMeta.map((stage) => {
                   const stageState = formData.approvals[stage.key];
@@ -1105,14 +1298,22 @@ export default function PreventiveMaintenanceOrder() {
                           </div>
                         </div>
                       ) : (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => startApproval(stage.key)}
-                          disabled={!canApprove(stage.key)}
+                        <span
+                          title={
+                            stage.key === "technician" && blankChecklistCount > 0
+                              ? "Fill in every checklist Result before approving"
+                              : undefined
+                          }
                         >
-                          Approve
-                        </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => startApproval(stage.key)}
+                            disabled={!canApprove(stage.key)}
+                          >
+                            Approve
+                          </Button>
+                        </span>
                       )}
                     </div>
                   );

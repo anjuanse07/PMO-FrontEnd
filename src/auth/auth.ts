@@ -16,6 +16,7 @@ export type AppUser = {
 };
 
 const USER_KEY = "pmo_current_user";
+const AUDIT_SESSION_KEY = "pmo_audit_session";
 
 const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) || "http://localhost:5000";
@@ -52,6 +53,15 @@ export function setCurrentUser(user: AppUser | null): void {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
+export function getAuditSessionId(): string {
+  let sessionId = sessionStorage.getItem(AUDIT_SESSION_KEY);
+  if (!sessionId) {
+    sessionId = crypto.randomUUID();
+    sessionStorage.setItem(AUDIT_SESSION_KEY, sessionId);
+  }
+  return sessionId;
+}
+
 export async function signInUser(
   nickname: string,
   password: string
@@ -61,6 +71,7 @@ export async function signInUser(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "X-Audit-Session-Id": getAuditSessionId(),
       },
       body: JSON.stringify({
         nickname: nickname.trim(),
@@ -103,6 +114,18 @@ export async function signInUser(
 }
 
 export function logoutUser(): void {
+  const user = getCurrentUser();
+  if (user) {
+    void fetch(`${API_BASE_URL}/api/users/logout`, {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Audit-Session-Id": getAuditSessionId(),
+      },
+      body: JSON.stringify({ user_id: user.id }),
+    }).catch((error) => console.error("Logout audit failed:", error));
+  }
   setCurrentUser(null);
 }
 

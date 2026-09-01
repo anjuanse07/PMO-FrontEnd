@@ -42,7 +42,9 @@ export type PlannedPreventive = {
   preventiveTypes: PreventiveType[];
   status: "Draft" | "Approved by Engineering" | "Approved by Manager";
   approvedByEngineeringUser?: string | null;
+  approvedByEngineeringDate?: string | null;
   approvedByManagerUser?: string | null;
+  approvedByManagerDate?: string | null;
 };
 
 export const defaultMachineTypeOptions: Record<MachineSub, PreventiveType[]> = {

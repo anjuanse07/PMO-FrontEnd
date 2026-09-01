@@ -12,6 +12,7 @@ import Buttons from "./pages/UiElements/Buttons";
 import LineChart from "./pages/Charts/LineChart";
 import BarChart from "./pages/Charts/BarChart";
 import Calendar from "./pages/Calendar";
+import AuditLogs from "./pages/AuditLogs";
 import OrderIcon from "./pages/PreventiveMaintenanceOrder";
 import YearlyPreventiveSchedule from "./pages/YearlyPreventiveSchedule";
 import YearlyScheduleMatrix from "./pages/YearlyScheduleMatrix";
@@ -23,6 +24,7 @@ import AppLayout from "./layout/AppLayout";
 import { ScrollToTop } from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
 import { getCurrentUser } from "./auth/auth";
+import AuditTracker from "./components/common/AuditTracker";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = getCurrentUser();
@@ -34,6 +36,7 @@ export default function App() {
     <>
       <Router>
         <ScrollToTop />
+        <AuditTracker />
         <Routes>
           {/* Dashboard Layout */}
           <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
@@ -46,6 +49,7 @@ export default function App() {
             <Route path="/yearly-preventive-schedule" element={<YearlyPreventiveSchedule />} />
             <Route path="/yearly-schedule-matrix" element={<YearlyScheduleMatrix />} />
             <Route path="/calendar" element={<Calendar />} />
+            <Route path="/audit-logs" element={<AuditLogs />} />
             <Route path="/blank" element={<Blank />} />
 
             {/* Forms */}
