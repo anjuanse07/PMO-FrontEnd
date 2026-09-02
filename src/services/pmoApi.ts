@@ -1,3 +1,15 @@
+import { getAuditSessionId, getCurrentUser } from "../auth/auth";
+
+function auditHeaders(): Record<string, string> {
+  const user = getCurrentUser();
+  return {
+    "Content-Type": "application/json",
+    "X-Audit-Session-Id": getAuditSessionId(),
+    ...(user ? { "X-Audit-User-Id": String(user.id) } : {}),
+  };
+}
+
+// ------------------------------------------------------------------
 export type MachineRecord = {
   no: number;
   kode_mesin: string;
@@ -5,7 +17,9 @@ export type MachineRecord = {
   lokasi: string | null;
   departemen: string | null;
   kategori: "MTC" | "UTY" | "BLD";
+  sub_child: string | null; // NEW — e.g. "MTC 1", "UTY 2"; null until backfilled
 };
+
 
 export type TechnicianRecord = {
   technician_name: string;
@@ -105,7 +119,7 @@ export async function saveOrderResults(
 ) {
   const response = await fetch(`${API_BASE}/api/approved-orders/${orderId}/results`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify({ items }),
   });
   if (!response.ok) {
@@ -143,7 +157,7 @@ export async function createMachineParameter(payload: {
 }) {
   const response = await fetch(`${API_BASE}/api/machine-parameters`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -165,7 +179,7 @@ export async function bulkCreateMachineParameters(
 ) {
   const response = await fetch(`${API_BASE}/api/machine-parameters/bulk`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify({ items }),
   });
   if (!response.ok) {
@@ -181,7 +195,7 @@ export async function updateMachineParameter(
 ) {
   const response = await fetch(`${API_BASE}/api/machine-parameters/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify(payload),
   });
   if (!response.ok) {
@@ -192,7 +206,7 @@ export async function updateMachineParameter(
 }
 
 export async function deleteMachineParameter(id: number) {
-  const response = await fetch(`${API_BASE}/api/machine-parameters/${id}`, { method: "DELETE" });
+  const response = await fetch(`${API_BASE}/api/machine-parameters/${id}`, { method: "DELETE", headers: auditHeaders() });
   if (!response.ok) throw new Error("Failed to delete machine parameter");
   return response.json();
 }
@@ -257,9 +271,7 @@ export async function createSchedulePlan(payload: {
 }) {
   const response = await fetch(`${API_BASE}/api/schedules`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: auditHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -280,9 +292,7 @@ export async function updateScheduleStatus(
 ) {
   const response = await fetch(`${API_BASE}/api/schedules/${id}/status`, {
     method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers: auditHeaders(),
     body: JSON.stringify({ status, current_role: currentRole, actor_user_id: actorUserId, ...fields }),
   });
 
@@ -306,7 +316,7 @@ export async function fetchApprovedOrders(): Promise<ApprovedOrderRecord[]> {
 export async function createApprovedOrder(payload: Omit<ApprovedOrderRecord, "id" | "created_at" | "updated_at">) {
   const response = await fetch(`${API_BASE}/api/approved-orders`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -341,7 +351,7 @@ export async function updateApprovedOrder(
 ) {
   const response = await fetch(`${API_BASE}/api/approved-orders/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -356,6 +366,7 @@ export async function updateApprovedOrder(
 export async function deleteSchedulePlan(id: number) {
   const response = await fetch(`${API_BASE}/api/schedules/${id}`, {
     method: "DELETE",
+    headers: auditHeaders(),
   });
 
   if (!response.ok) {
@@ -402,8 +413,34 @@ export type AuditLogRecord = {
   created_at: string;
 };
 
-export async function fetchAuditLogs(role: string): Promise<AuditLogRecord[]> {
-  const params = new URLSearchParams({ role, limit: "200" });
+export type AuditLogPage = {
+  rows: AuditLogRecord[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+export type AuditLogFilters = {
+  page: number;
+  search: string;
+  activity: string;
+  startAt: string;
+  endAt: string;
+};
+
+function toAuditDateTime(value: string): string | null {
+  return value ? `${value.replace("T", " ")}:00` : null;
+}
+
+export async function fetchAuditLogs(role: string, filters: AuditLogFilters): Promise<AuditLogPage> {
+  const params = new URLSearchParams({ role, page: String(filters.page) });
+  if (filters.search) params.set("search", filters.search);
+  if (filters.activity) params.set("activity", filters.activity);
+  const startAt = toAuditDateTime(filters.startAt);
+  const endAt = toAuditDateTime(filters.endAt);
+  if (startAt) params.set("start_at", startAt);
+  if (endAt) params.set("end_at", endAt);
   const response = await fetch(`${API_BASE}/api/audit-logs?${params}`);
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);
@@ -412,10 +449,48 @@ export async function fetchAuditLogs(role: string): Promise<AuditLogRecord[]> {
   return response.json();
 }
 
+export async function exportAuditLogs(
+  role: string,
+  userId: number,
+  filters: Pick<AuditLogFilters, "activity" | "startAt" | "endAt">,
+): Promise<Blob> {
+  const params = new URLSearchParams({ role, user_id: String(userId) });
+  if (filters.activity) params.set("activity", filters.activity);
+  const startAt = toAuditDateTime(filters.startAt);
+  const endAt = toAuditDateTime(filters.endAt);
+  if (startAt) params.set("start_at", startAt);
+  if (endAt) params.set("end_at", endAt);
+  const response = await fetch(`${API_BASE}/api/audit-logs/export?${params}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to export audit logs");
+  }
+  return response.blob();
+}
+
+export async function exportAuditLogsPdf(
+  role: string,
+  userId: number,
+  filters: Pick<AuditLogFilters, "activity" | "startAt" | "endAt">,
+): Promise<AuditLogRecord[]> {
+  const params = new URLSearchParams({ role, user_id: String(userId), format: "pdf" });
+  if (filters.activity) params.set("activity", filters.activity);
+  const startAt = toAuditDateTime(filters.startAt);
+  const endAt = toAuditDateTime(filters.endAt);
+  if (startAt) params.set("start_at", startAt);
+  if (endAt) params.set("end_at", endAt);
+  const response = await fetch(`${API_BASE}/api/audit-logs/export?${params}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to export audit logs");
+  }
+  return response.json();
+}
+
 export async function updateUser(id: number, payload: UpdateUserPayload): Promise<UserRecord> {
   const response = await fetch(`${API_BASE}/api/users/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: auditHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -427,3 +502,104 @@ export async function updateUser(id: number, payload: UpdateUserPayload): Promis
   const data = await response.json();
   return data.user as UserRecord;
 }
+
+// ------------------------------------------------------------------
+// History Log
+// ------------------------------------------------------------------
+
+export type HistoryLogStatus = "In Progress" | "Approval" | "Completed";
+
+export type HistoryLogRecord = {
+  id: number;
+  machine_no: number;
+  machine_asset: string;
+  machine_name: string;
+  location: string | null;
+  department: string | null;
+  main_sub: "MTC" | "UTY" | "BLD";
+  sub_child: string | null;
+  preventive_types: string;
+  preventive_date: string | null;
+  execution_date: string | null;
+  start_clock: string | null;
+  end_clock: string | null;
+  technician_name: string | null;
+  status: HistoryLogStatus;
+  approved_by_manager_date: string | null;
+  approved_by_manager_user: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HistoryLogFilters = {
+  search?: string;
+  mainSub?: string;
+  childSub?: string;
+  machineNo?: string;
+  machineName?: string;
+  machineId?: string;
+  status?: string;
+  startAt?: string;
+  endAt?: string;
+};
+
+function buildHistoryLogParams(filters: HistoryLogFilters): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.search) params.set("search", filters.search);
+  if (filters.mainSub) params.set("main_sub", filters.mainSub);
+  if (filters.childSub) params.set("child_sub", filters.childSub);
+  if (filters.machineNo) params.set("machine_no", filters.machineNo);
+  if (filters.machineName) params.set("machine_name", filters.machineName);
+  if (filters.machineId) params.set("machine_id", filters.machineId);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.startAt) params.set("start_at", filters.startAt);
+  if (filters.endAt) params.set("end_at", filters.endAt);
+  return params;
+}
+
+export async function fetchHistoryLogs(filters: HistoryLogFilters = {}): Promise<HistoryLogRecord[]> {
+  const params = buildHistoryLogParams(filters);
+  const response = await fetch(`${API_BASE}/api/history-logs?${params.toString()}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to fetch history logs");
+  }
+  return response.json();
+}
+
+export async function exportHistoryLogs(userId: number, filters: HistoryLogFilters = {}): Promise<Blob> {
+  const params = buildHistoryLogParams(filters);
+  params.set("user_id", String(userId));
+  const response = await fetch(`${API_BASE}/api/history-logs/export?${params.toString()}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to export history logs");
+  }
+  return response.blob();
+}
+
+export type HistoryLogImportItem = {
+  machine_asset: string; // kode_mesin — used to match the machine
+  preventive_types: string;
+  execution_date: string; // "YYYY-MM-DD"
+  technician_name?: string | null;
+  start_clock?: string | null;
+  end_clock?: string | null;
+  status?: HistoryLogStatus;
+};
+
+export async function importHistoryLogs(
+  items: HistoryLogImportItem[],
+): Promise<{ success: boolean; inserted: number; skipped: string[] }> {
+  const response = await fetch(`${API_BASE}/api/history-logs/import`, {
+    method: "POST",
+    headers: auditHeaders(),
+    body: JSON.stringify({ items }),
+  });
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => null);
+    throw new Error(errorBody?.message || "Failed to import history logs");
+  }
+  return response.json();
+}
+

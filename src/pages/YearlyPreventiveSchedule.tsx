@@ -71,6 +71,14 @@ type ScheduledStatusFilter =
   | "Approved by Manager"
   | "Completed";
 
+// Shape of a plan once enrichedPlansWithAsset attaches the resolved asset
+// code and the derived "Completed" status - named so the filter/sort/render
+// code downstream can reference it instead of casting to `any`.
+type EnrichedScheduleEntry = PlannedPreventive & {
+  assetNumber: string;
+  effectiveStatus: ScheduledStatusFilter;
+};
+
 // Tab bar config for the Scheduled Preventive Entries table (mirrors the
 // segmented-tab pattern used on the Preventive Orders page) - each tab is a
 // quick sub-view into one stage of the schedule's lifecycle, with a live
@@ -112,7 +120,11 @@ export default function YearlyPreventiveSchedule() {
   const [scheduledTypeFilter, setScheduledTypeFilter] = useState<PreventiveType | "All">("All");
   const [scheduledStatusFilter, setScheduledStatusFilter] = useState<ScheduledStatusFilter>("All");
   const [scheduledSearchText, setScheduledSearchText] = useState("");
-  const [showApprovedByManager, setShowApprovedByManager] = useState(true);
+  // Defaults to false so entries already Approved by Manager (and their
+  // "Completed" descendants, see effectiveStatus above) are automatically
+  // hidden from the Scheduled Preventive Entries table - the checkbox below
+  // still lets the user opt back in to see them.
+  const [showApprovedByManager, setShowApprovedByManager] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
   const [scheduledSortColumn, setScheduledSortColumn] = useState<ScheduledSortColumn>("asset");
   const [scheduledSortDirection, setScheduledSortDirection] = useState<SortDirection>("asc");
@@ -633,7 +645,7 @@ export default function YearlyPreventiveSchedule() {
     return keys;
   }, [approvedOrders, selectedYear]);
 
-  const enrichedPlansWithAsset = useMemo(() => {
+  const enrichedPlansWithAsset = useMemo<EnrichedScheduleEntry[]>(() => {
     return displayPlans.map((plan) => {
       const machine = machineRecords.find((m) => String(m.no) === plan.machineId);
       const effectiveStatus: ScheduledStatusFilter =
@@ -680,7 +692,7 @@ export default function YearlyPreventiveSchedule() {
         (plan) =>
           plan.machineName.toLowerCase().includes(searchLower) ||
           plan.machineId.toLowerCase().includes(searchLower) ||
-          (plan as any).assetNumber?.toLowerCase().includes(searchLower) ||
+          plan.assetNumber?.toLowerCase().includes(searchLower) ||
           plan.department?.toLowerCase().includes(searchLower),
       );
     }
@@ -722,7 +734,7 @@ export default function YearlyPreventiveSchedule() {
     const sorted = [...filtered].sort((a, b) => {
       let comparison = 0;
       if (scheduledSortColumn === "asset") {
-        comparison = String((a as any).assetNumber || a.machineId).localeCompare(String((b as any).assetNumber || b.machineId));
+        comparison = String(a.assetNumber || a.machineId).localeCompare(String(b.assetNumber || b.machineId));
       } else if (scheduledSortColumn === "sub") {
         comparison = a.sub.localeCompare(b.sub);
       } else if (scheduledSortColumn === "month") {
@@ -1273,7 +1285,7 @@ export default function YearlyPreventiveSchedule() {
                   onChange={(e) => setShowApprovedByManager(e.target.checked)}
                   className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
                 />
-                <span className="text-xs font-semibold">Show approved by manager</span>
+                <span className="text-xs font-semibold">Show approved by manager / completed</span>
               </label>
             </div>
 
@@ -1349,7 +1361,7 @@ export default function YearlyPreventiveSchedule() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                  {filteredScheduledEntries.map((entry: any) => (
+                  {filteredScheduledEntries.map((entry) => (
                     <tr key={entry.id}>
                       <td className="px-4 py-3 text-sm">
                         <input

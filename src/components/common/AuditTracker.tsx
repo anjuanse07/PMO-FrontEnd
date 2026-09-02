@@ -5,7 +5,7 @@ import { getAuditSessionId, getCurrentUser } from "../../auth/auth";
 const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) || "http://localhost:5000";
 
-function recordActivity(eventType: "PAGE_VIEW" | "CLICK", pagePath: string, actionLabel?: string) {
+function recordActivity(pagePath: string) {
   const user = getCurrentUser();
   if (!user) return;
 
@@ -18,9 +18,8 @@ function recordActivity(eventType: "PAGE_VIEW" | "CLICK", pagePath: string, acti
     },
     body: JSON.stringify({
       user_id: user.id,
-      event_type: eventType,
+      event_type: "PAGE_VIEW",
       page_path: pagePath,
-      action_label: actionLabel,
     }),
   }).catch((error) => console.error("Activity audit failed:", error));
 }
@@ -30,21 +29,7 @@ export default function AuditTracker() {
 
   useEffect(() => {
     const pagePath = `${location.pathname}${location.search}`;
-    recordActivity("PAGE_VIEW", pagePath);
-
-    const handleClick = (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target.closest("button, a") : null;
-      if (!target) return;
-
-      const actionLabel = (target.getAttribute("aria-label") || target.textContent || "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 255);
-      if (actionLabel) recordActivity("CLICK", pagePath, actionLabel);
-    };
-
-    document.addEventListener("click", handleClick);
-    return () => document.removeEventListener("click", handleClick);
+    recordActivity(pagePath);
   }, [location.pathname, location.search]);
 
   return null;

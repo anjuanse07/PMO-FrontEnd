@@ -81,7 +81,10 @@ const cellKey = (month: number, week: number) => `${month}-${week}`;
 
 export default function YearlyScheduleMatrix() {
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
+  // Empty array = "Full Year" (every month shown), otherwise the exact set
+  // of months to show as matrix columns - lets the user pick a couple of
+  // months at once instead of only ever one month or all twelve.
+  const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("UTY");
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
@@ -129,9 +132,18 @@ export default function YearlyScheduleMatrix() {
   // the one selected month, so picking a month narrows the table instead of
   // just filtering rows.
   const monthsToShow = useMemo(
-    () => (selectedMonth === "All" ? Array.from({ length: 12 }, (_, i) => i) : [selectedMonth]),
-    [selectedMonth],
+    () =>
+      selectedMonths.length === 0
+        ? Array.from({ length: 12 }, (_, i) => i)
+        : [...selectedMonths].sort((a, b) => a - b),
+    [selectedMonths],
   );
+
+  const toggleMonth = (month: number) => {
+    setSelectedMonths((prev) =>
+      prev.includes(month) ? prev.filter((m) => m !== month) : [...prev, month],
+    );
+  };
 
   // machine list, grouped by sub (BLD / UTY / MTC), keyed by machine no
   const machinesBySub = useMemo(() => {
@@ -236,7 +248,7 @@ export default function YearlyScheduleMatrix() {
   // Reset to page 1 whenever the filtered row set changes underneath the table
   useEffect(() => {
     setCurrentMatrixPage(1);
-  }, [activeTab, selectedYear, selectedMonth, searchText]);
+  }, [activeTab, selectedYear, selectedMonths, searchText]);
 
   const matrixPageCount = Math.max(1, Math.ceil(currentMachines.length / MATRIX_ROWS_PAGE_SIZE));
 
@@ -303,7 +315,7 @@ export default function YearlyScheduleMatrix() {
 
       <div className="space-y-6">
         <ComponentCard title="Matrix Controls">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-4">
             <label className="text-sm text-gray-700 dark:text-gray-300">
               <span className="mb-2 block">Year</span>
               <select
@@ -319,20 +331,39 @@ export default function YearlyScheduleMatrix() {
               </select>
             </label>
 
-            <label className="text-sm text-gray-700 dark:text-gray-300">
-              <span className="mb-2 block">Month</span>
-              <select
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value === "All" ? "All" : Number(e.target.value))}
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              >
-                <option value="All">Full Year</option>
-                {monthAbbrev.map((month, index) => (
-                  <option key={month} value={index}>
-                    {month}
-                  </option>
-                ))}
-              </select>
+            <label className="text-sm text-gray-700 dark:text-gray-300 md:col-span-2">
+              <span className="mb-2 block">
+                Months
+                {selectedMonths.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMonths([])}
+                    className="ml-2 text-xs font-medium text-brand-600 hover:underline dark:text-brand-400"
+                  >
+                    Clear (show Full Year)
+                  </button>
+                )}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {monthAbbrev.map((month, index) => {
+                  const isSelected = selectedMonths.includes(index);
+                  return (
+                    <button
+                      key={month}
+                      type="button"
+                      onClick={() => toggleMonth(index)}
+                      aria-pressed={isSelected}
+                      className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${
+                        isSelected
+                          ? "border-brand-500 bg-brand-500 text-white"
+                          : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                      }`}
+                    >
+                      {month}
+                    </button>
+                  );
+                })}
+              </div>
             </label>
 
             {activeTab !== "Dashboard" && (
@@ -393,7 +424,11 @@ export default function YearlyScheduleMatrix() {
 
         {activeTab !== "Dashboard" ? (
           <ComponentCard
-            title={`${activeTab} - Matrix (${selectedMonth === "All" ? "Full Year" : monthAbbrev[selectedMonth]} ${selectedYear})`}
+            title={`${activeTab} - Matrix (${
+              selectedMonths.length === 0
+                ? "Full Year"
+                : monthsToShow.map((m) => monthAbbrev[m]).join(", ")
+            } ${selectedYear})`}
           >
             <div className="mb-3 text-sm text-gray-600 dark:text-gray-300">
               {dashboardStats.perSub[activeTab].completed} of{" "}

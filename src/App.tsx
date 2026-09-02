@@ -25,6 +25,7 @@ import { ScrollToTop } from "./components/common/ScrollToTop";
 import Home from "./pages/Dashboard/Home";
 import { getCurrentUser } from "./auth/auth";
 import AuditTracker from "./components/common/AuditTracker";
+import HistoryLogs from "./pages/HistoryLogs";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = getCurrentUser();
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="/yearly-schedule-matrix" element={<YearlyScheduleMatrix />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
+            <Route path="/history-logs" element={<HistoryLogs />} />
             <Route path="/blank" element={<Blank />} />
 
             {/* Forms */}

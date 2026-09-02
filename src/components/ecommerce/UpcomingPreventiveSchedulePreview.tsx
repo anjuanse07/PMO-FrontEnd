@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import ComponentCard from "../common/ComponentCard";
 import Badge from "../ui/badge/Badge";
@@ -56,10 +56,13 @@ export default function UpcomingPreventiveSchedulePreview({
     void loadData();
   }, []);
 
-  const isPending = (s: ScheduleRecord) =>
-    (s.status === "Draft" || s.status === "Approved by Engineering") &&
-    s.tahun === currentYear &&
-    (month === "All" || s.bulan === month);
+  const isPending = useCallback(
+    (s: ScheduleRecord) =>
+      (s.status === "Draft" || s.status === "Approved by Engineering") &&
+      s.tahun === currentYear &&
+      (month === "All" || s.bulan === month),
+    [currentYear, month],
+  );
 
   const pendingEntries = useMemo(() => {
     return schedules
@@ -70,11 +73,11 @@ export default function UpcomingPreventiveSchedulePreview({
         return a.minggu - b.minggu;
       })
       .slice(0, ROWS_LIMIT);
-  }, [schedules, currentYear, month]);
+  }, [schedules, isPending]);
 
   const pendingCount = useMemo(
     () => schedules.filter(isPending).length,
-    [schedules, currentYear, month],
+    [schedules, isPending],
   );
 
   return (
@@ -122,7 +125,7 @@ export default function UpcomingPreventiveSchedulePreview({
             {!isLoading && pendingEntries.length === 0 && (
               <tr>
                 <td colSpan={4} className="px-3 py-6 text-center text-gray-400">
-                  Nothing pending approval right now.
+                  Nothing Pending Right Now.
                 </td>
               </tr>
             )}

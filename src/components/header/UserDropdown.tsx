@@ -96,7 +96,7 @@ export default function UserDropdown() {
             </DropdownItem>
           </li>
           <li>
-            <DropdownItem
+            {/* <DropdownItem
               onItemClick={closeDropdown}
               tag="a"
               to="/profile"
@@ -118,10 +118,10 @@ export default function UserDropdown() {
                 />
               </svg>
               Account settings
-            </DropdownItem>
+            </DropdownItem> */}
           </li>
           <li>
-            <DropdownItem
+            {/* <DropdownItem
               onItemClick={closeDropdown}
               tag="a"
               to="/profile"
@@ -143,7 +143,7 @@ export default function UserDropdown() {
                 />
               </svg>
               Support
-            </DropdownItem>
+            </DropdownItem> */}
           </li>
         </ul>
         <button

@@ -10,11 +10,13 @@ import {
   GridIcon,
   HorizontaLDots,
   ListIcon,
-  // PageIcon,
+  // Filecon,
+  PageIcon,
   // PieChartIcon,
-  // PlugInIcon,
+  PlugInIcon,
   // TableIcon,
   // UserCircleIcon,
+  TableIcon,
 } from "../icons";
 import { useSidebar } from "../context/SidebarContext";
 import SidebarWidget from "./SidebarWidget";
@@ -31,12 +33,12 @@ const navItems: NavItem[] = [
     icon: <GridIcon />,
     name: "Dashboard",
     subItems: [{ name: "Preventive Dashboard", path: "/", pro: false },
-      { name: "Engineering Yearly Schedule", path: "/yearly-schedule-matrix", pro: false },
-      { name: "User Profile", path: "/profile", pro: false }
+    { name: "Engineering Yearly Schedule", path: "/yearly-schedule-matrix", pro: false },
+    { name: "User Profile", path: "/profile", pro: false }
     ],
   },
   {
-    icon: <CalenderIcon />,
+    icon: <PageIcon />,
     name: "Preventive Schedule Assignment",
     path: "/yearly-preventive-schedule",
   },
@@ -61,9 +63,14 @@ const navItems: NavItem[] = [
     path: "/calendar",
   },
   {
-    icon: <ListIcon />,
+    icon: <PlugInIcon />,
     name: "Audit Logs",
     path: "/audit-logs",
+  },
+  {
+    icon: <TableIcon />,
+    name: "History Log",
+    path: "/history-logs",
   },
   // {
   //   icon: <UserCircleIcon />,
