@@ -91,7 +91,7 @@ export default function YearlyScheduleMatrix() {
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
-  const MATRIX_ROWS_PAGE_SIZE = 20;
+  const MATRIX_ROWS_PAGE_SIZE = 100;
   const [currentMatrixPage, setCurrentMatrixPage] = useState(1);
 
   useEffect(() => {

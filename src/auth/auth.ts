@@ -156,6 +156,14 @@ export function canFillPreventiveForm(user: AppUser | null): boolean {
   );
 }
 
+// Audit Logs and History Log are restricted to these two roles.
+// Kept in sync with LOG_VIEWER_ROLES in backend/server.js.
+export function canViewLogs(user: AppUser | null): boolean {
+  return Boolean(
+    user && ["manager", "engineering supervisor"].includes(user.role)
+  );
+}
+
 export function getRoleLabel(role: AppRole): string {
   switch (role) {
     case "manager":

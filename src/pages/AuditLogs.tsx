@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { getCurrentUser, isManager } from "../auth/auth";
+import { getCurrentUser, canViewLogs } from "../auth/auth";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
+import Button from "../components/ui/button/Button";
 import { exportAuditLogs, exportAuditLogsPdf, fetchAuditLogs, type AuditLogRecord } from "../services/pmoApi";
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -31,6 +32,8 @@ function escapeHtml(value: string | number | null | undefined) {
 export default function AuditLogs() {
   const currentUser = getCurrentUser();
   const currentUserRole = currentUser?.role;
+  // Audit Logs is restricted to manager and engineering supervisor accounts.
+  const canViewAuditLogs = canViewLogs(currentUser);
   const [logs, setLogs] = useState<AuditLogRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -45,7 +48,7 @@ export default function AuditLogs() {
   const [isExporting, setIsExporting] = useState(false);
 
   useEffect(() => {
-    if (currentUserRole !== "manager") {
+    if (!canViewAuditLogs) {
       setIsLoading(false);
       return;
     }
@@ -54,7 +57,7 @@ export default function AuditLogs() {
       setIsLoading(true);
       setError("");
       try {
-        const result = await fetchAuditLogs(currentUserRole, { page, search, activity, startAt, endAt });
+        const result = await fetchAuditLogs(currentUserRole ?? "", { page, search, activity, startAt, endAt });
         setLogs(result.rows);
         setTotal(result.total);
         setTotalPages(result.totalPages);
@@ -67,10 +70,10 @@ export default function AuditLogs() {
     };
 
     void loadInitialLogs();
-  }, [activity, currentUserRole, endAt, page, refreshKey, search, startAt]);
+  }, [activity, canViewAuditLogs, currentUserRole, endAt, page, refreshKey, search, startAt]);
 
   const exportLogs = async () => {
-    if (!currentUser || !isManager(currentUser)) return;
+    if (!currentUser || !canViewAuditLogs) return;
     if (startAt && endAt && startAt > endAt) {
       setError("The end date and time must be after the start date and time.");
       return;
@@ -94,7 +97,7 @@ export default function AuditLogs() {
   };
 
   const exportPdf = async () => {
-    if (!currentUser || !isManager(currentUser)) return;
+    if (!currentUser || !canViewAuditLogs) return;
     if (startAt && endAt && startAt > endAt) {
       setError("The end date and time must be after the start date and time.");
       return;
@@ -148,9 +151,9 @@ export default function AuditLogs() {
       <PageMeta title="Audit Logs | PMO" description="PMO application audit trail" />
       <PageBreadcrumb pageTitle="Audit Logs" />
 
-      {!isManager(currentUser) ? (
+      {!canViewAuditLogs ? (
         <div className="border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
-          Audit logs, including IP addresses, are available only to manager accounts.
+          Audit logs, including IP addresses, are available only to manager and engineering supervisor accounts.
         </div>
       ) : (
         <div className="border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
@@ -195,30 +198,15 @@ export default function AuditLogs() {
               <option value="USER_PROFILE_UPDATED">User profile updated</option>
             </select>
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setRefreshKey((value) => value + 1)}
-                disabled={isLoading}
-                className="border border-brand-500 bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
+              <Button size="sm" variant="outline" onClick={() => setRefreshKey((value) => value + 1)} disabled={isLoading}>
                 Refresh
-              </button>
-              <button
-                type="button"
-                onClick={() => void exportLogs()}
-                disabled={isExporting}
-                className="border border-brand-500 bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void exportLogs()} disabled={isExporting}>
                 {isExporting ? "Exporting..." : "Export CSV"}
-              </button>
-              <button
-                type="button"
-                onClick={() => void exportPdf()}
-                disabled={isExporting}
-                className="border border-brand-500 bg-brand-500 px-3 py-2 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
-              >
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => void exportPdf()} disabled={isExporting}>
                 Export PDF
-              </button>
+              </Button>
             </div>
           </div>
 

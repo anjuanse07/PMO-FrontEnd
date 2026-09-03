@@ -94,8 +94,11 @@ const scheduledStatusTabs: { key: ScheduledStatusFilter; label: string; icon: st
 export default function YearlyPreventiveSchedule() {
   const [selectedSub, setSelectedSub] = useState<MachineSub>("UTY");
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  const [selectedMonth, setSelectedMonth] = useState(0);
-  const [selectedWeek, setSelectedWeek] = useState(1);
+  // Default Month/Week to "this month, this week" instead of always January/Week 1.
+  // Week-of-month uses the same ceil(day / 7) convention as the rest of the app
+  // (e.g. the History Log's legacy-record import), capped at 5.
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+  const [selectedWeek, setSelectedWeek] = useState(Math.min(5, Math.ceil(new Date().getDate() / 7)));
   const [plans, setPlans] = useState<PlannedPreventive[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<Record<string, PreventiveType[]>>({});
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);

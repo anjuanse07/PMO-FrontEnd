@@ -532,6 +532,7 @@ export type HistoryLogRecord = {
 };
 
 export type HistoryLogFilters = {
+  role?: string; // required by the backend — only manager / engineering supervisor may view
   search?: string;
   mainSub?: string;
   childSub?: string;
@@ -545,6 +546,7 @@ export type HistoryLogFilters = {
 
 function buildHistoryLogParams(filters: HistoryLogFilters): URLSearchParams {
   const params = new URLSearchParams();
+  if (filters.role) params.set("role", filters.role);
   if (filters.search) params.set("search", filters.search);
   if (filters.mainSub) params.set("main_sub", filters.mainSub);
   if (filters.childSub) params.set("child_sub", filters.childSub);
@@ -590,11 +592,12 @@ export type HistoryLogImportItem = {
 
 export async function importHistoryLogs(
   items: HistoryLogImportItem[],
+  role?: string,
 ): Promise<{ success: boolean; inserted: number; skipped: string[] }> {
   const response = await fetch(`${API_BASE}/api/history-logs/import`, {
     method: "POST",
     headers: auditHeaders(),
-    body: JSON.stringify({ items }),
+    body: JSON.stringify({ items, role }),
   });
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null);

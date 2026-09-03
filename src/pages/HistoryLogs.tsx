@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getCurrentUser } from "../auth/auth";
+import { getCurrentUser, canViewLogs } from "../auth/auth";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import Button from "../components/ui/button/Button";
@@ -104,6 +104,9 @@ type OrderResultRow = {
 
 export default function HistoryLogs() {
   const currentUser = getCurrentUser();
+  const currentUserRole = currentUser?.role;
+  // Same allow-list as the backend's isLogViewerRole() in server.js — keep in sync.
+  const canViewHistoryLogs = canViewLogs(currentUser);
 
   const [machines, setMachines] = useState<MachineRecord[]>([]);
   const [logs, setLogs] = useState<HistoryLogRecord[]>([]);
@@ -119,7 +122,7 @@ export default function HistoryLogs() {
   const [childSub, setChildSub] = useState("");
   const [machineNo, setMachineNo] = useState("");
   const [machineId, setMachineId] = useState("");
-  // const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("");
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
 
@@ -139,18 +142,25 @@ export default function HistoryLogs() {
 
   // Load machines once
   useEffect(() => {
+    if (!canViewHistoryLogs) return;
     fetchMachines()
       .then(setMachines)
       .catch((err) => console.error("Failed to load machines:", err));
-  }, []);
+  }, [canViewHistoryLogs]);
 
   // Load history logs whenever a filter changes
   useEffect(() => {
+    if (!canViewHistoryLogs) {
+      setIsLoading(false);
+      return;
+    }
+
     const loadLogs = async () => {
       setIsLoading(true);
       setError("");
       try {
         const rows = await fetchHistoryLogs({
+          role: currentUserRole,
           search,
           mainSub,
           childSub,
@@ -169,7 +179,7 @@ export default function HistoryLogs() {
     };
 
     void loadLogs();
-  }, [search, mainSub, childSub, machineNo, machineId, startAt, endAt, refreshKey]);
+  }, [canViewHistoryLogs, currentUserRole, search, mainSub, childSub, machineNo, machineId, status, startAt, endAt, refreshKey]);
 
   // Child-sub options narrow to whatever main sub is selected
   const childSubOptions = useMemo(() => {
@@ -289,7 +299,7 @@ export default function HistoryLogs() {
   // Export / Import
   // ------------------------------------------------------------------
   const handleExport = async () => {
-    if (!currentUser) return;
+    if (!currentUser || !canViewHistoryLogs) return;
     if (startAt && endAt && startAt > endAt) {
       setError("The 'To' date must be after the 'From' date.");
       return;
@@ -298,6 +308,7 @@ export default function HistoryLogs() {
     setError("");
     try {
       const file = await exportHistoryLogs(currentUser.id, {
+        role: currentUserRole,
         search,
         mainSub,
         childSub,
@@ -360,7 +371,7 @@ export default function HistoryLogs() {
     }
 
     try {
-      const result = await importHistoryLogs(items);
+      const result = await importHistoryLogs(items, currentUserRole);
       setMessage(
         `Imported ${result.inserted} record(s).` +
           (result.skipped?.length ? ` Skipped ${result.skipped.length}: ${result.skipped.slice(0, 5).join(", ")}${result.skipped.length > 5 ? "..." : ""}` : ""),
@@ -381,6 +392,12 @@ export default function HistoryLogs() {
       <PageMeta title="History Log | PMO" description="Preventive maintenance history per machine" />
       <PageBreadcrumb pageTitle="History Log" />
 
+      {!canViewHistoryLogs ? (
+        <div className="border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-200">
+          The History Log is available only to manager and engineering supervisor accounts.
+        </div>
+      ) : (
+      <>
       <div className="border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-white/[0.05] sm:px-6">
           <div>
@@ -412,12 +429,12 @@ export default function HistoryLogs() {
               <option key={sub} value={sub}>{sub}</option>
             ))}
           </select>
-          {/* <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass} style={{ width: 170 }}>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass} style={{ width: 170 }}>
             <option value="">All Statuses</option>
             <option value="In Progress">In Progress</option>
             <option value="Approval">Approval</option>
             <option value="Completed">Completed</option>
-          </select> */}
+          </select>
         </div>
 
         {/* Filters row 2: machine name / id + dates */}
@@ -458,9 +475,9 @@ export default function HistoryLogs() {
           <Button size="sm" variant="outline" onClick={() => void handleExport()} disabled={isExporting}>
             {isExporting ? "Exporting..." : "Export CSV"}
           </Button>
-          {/* <Button size="sm" variant="outline" onClick={() => setIsImportModalOpen(true)}>
+          <Button size="sm" variant="outline" onClick={() => setIsImportModalOpen(true)}>
             Import CSV
-          </Button> */}
+          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -689,6 +706,8 @@ export default function HistoryLogs() {
           </div>
         )}
       </Modal>
+      </>
+      )}
     </>
   );
 }

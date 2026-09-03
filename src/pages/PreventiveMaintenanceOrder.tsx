@@ -181,7 +181,7 @@ export default function PreventiveMaintenanceOrder() {
   // Hides "Completed" orders from the table by default - the list is meant for orders
   // that still need attention, not a historical log. Independent of the Status dropdown
   // above, so switching Status back to "All" doesn't silently bring Completed back.
-  const [hideCompleted, setHideCompleted] = useState(true);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [subFilter, setSubFilter] = useState<string>("All");
   const [departmentFilter, setDepartmentFilter] = useState<string>("All");
   const [typeFilter, setTypeFilter] = useState<string>("All");
@@ -368,12 +368,12 @@ export default function PreventiveMaintenanceOrder() {
         (statusFilter === "In Progress" || statusFilter === "Completed"
           ? order.status === statusFilter
           : getApprovalStage(order, approvedOrdersById) === statusFilter);
-      // The "Hide Completed" checkbox only makes sense while browsing "All" (or
+      // The "Show Completed" checkbox only makes sense while browsing "All" (or
       // a non-Completed tab, where it's a no-op anyway) - if the person has
       // explicitly clicked the Completed tab, always show completed orders.
-      const matchesHideCompleted = !hideCompleted || order.status !== "Completed" || statusFilter === "Completed";
+      const matchesShowCompleted = showCompleted || order.status !== "Completed" || statusFilter === "Completed";
 
-      return matchesStatus && matchesHideCompleted;
+      return matchesStatus && matchesShowCompleted;
     });
 
     return [...filtered].sort((a, b) => {
@@ -397,7 +397,7 @@ export default function PreventiveMaintenanceOrder() {
           : String(aVal).localeCompare(String(bVal));
       return orderSortDirection === "asc" ? comparison : -comparison;
     });
-  }, [baseFilteredOrders, approvedOrdersById, statusFilter, hideCompleted, orderSortColumn, orderSortDirection]);
+  }, [baseFilteredOrders, approvedOrdersById, statusFilter, showCompleted, orderSortColumn, orderSortDirection]);
 
   const openForm = async (order: MaintenanceOrder) => {
     setSelectedOrder(order);
@@ -846,14 +846,14 @@ export default function PreventiveMaintenanceOrder() {
             </label>
 
 
-            <label className="flex items-end gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <label className="flex items-center gap-2 self-center text-sm text-gray-700 dark:text-gray-300">
               <input
                 type="checkbox"
-                checked={hideCompleted}
-                onChange={(e) => setHideCompleted(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800"
+                checked={showCompleted}
+                onChange={(e) => setShowCompleted(e.target.checked)}
+                className="h-4 w-4 shrink-0 rounded border-gray-300 text-brand-500 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800"
               />
-              <span className="pb-0.5">Hide Completed</span>
+              <span>Show Completed</span>
             </label>
           </div>
         </ComponentCard>

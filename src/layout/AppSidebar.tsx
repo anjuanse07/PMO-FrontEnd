@@ -14,11 +14,11 @@ import {
   PageIcon,
   // PieChartIcon,
   PlugInIcon,
-  // TableIcon,
-  // UserCircleIcon,
   TableIcon,
+  // UserCircleIcon,
 } from "../icons";
 import { useSidebar } from "../context/SidebarContext";
+import { getCurrentUser, canViewLogs } from "../auth/auth";
 import SidebarWidget from "./SidebarWidget";
 
 type NavItem = {
@@ -26,6 +26,8 @@ type NavItem = {
   icon: React.ReactNode;
   path?: string;
   subItems?: { name: string; path: string; pro?: boolean; new?: boolean }[];
+  // True for items restricted to manager / engineering supervisor (see canViewLogs in auth.ts).
+  logViewerOnly?: boolean;
 };
 
 const navItems: NavItem[] = [
@@ -33,8 +35,8 @@ const navItems: NavItem[] = [
     icon: <GridIcon />,
     name: "Dashboard",
     subItems: [{ name: "Preventive Dashboard", path: "/", pro: false },
-    { name: "Engineering Yearly Schedule", path: "/yearly-schedule-matrix", pro: false },
-    { name: "User Profile", path: "/profile", pro: false }
+      { name: "Engineering Yearly Schedule", path: "/yearly-schedule-matrix", pro: false },
+      { name: "User Profile", path: "/profile", pro: false }
     ],
   },
   {
@@ -64,13 +66,15 @@ const navItems: NavItem[] = [
   },
   {
     icon: <PlugInIcon />,
-    name: "Audit Logs",
+    name: "Audit Log",
     path: "/audit-logs",
+    logViewerOnly: true,
   },
   {
     icon: <TableIcon />,
     name: "History Log",
     path: "/history-logs",
+    logViewerOnly: true,
   },
   // {
   //   icon: <UserCircleIcon />,
@@ -131,6 +135,11 @@ const navItems: NavItem[] = [
 const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
   const location = useLocation();
+  const currentUser = getCurrentUser();
+
+  // Nav items marked logViewerOnly (Audit Logs, History Log) are hidden
+  // unless the logged-in user is a manager or engineering supervisor.
+  const visibleNavItems = navItems.filter((item) => !item.logViewerOnly || canViewLogs(currentUser));
 
   const [openSubmenu, setOpenSubmenu] = useState<{
     type: "main" | "others";
@@ -372,7 +381,7 @@ const AppSidebar: React.FC = () => {
                   <HorizontaLDots className="size-6" />
                 )}
               </h2>
-              {renderMenuItems(navItems, "main")}
+              {renderMenuItems(visibleNavItems, "main")}
             </div>
             <div className="">
               {/* <h2
