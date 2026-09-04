@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import ComponentCard from "../common/ComponentCard";
 import Badge from "../ui/badge/Badge";
 import { type MachineSub } from "../../data/preventiveMaintenanceData";
@@ -64,6 +64,16 @@ interface YearlyProgressDashboardProps {
    *  (e.g. next to YearlyScheduleMatrixPreview in Home.tsx) to avoid
    *  showing it twice. */
   showBreakdown?: boolean;
+  /** Show the full-width "Overall Progress" bar. Default true. */
+  showOverallProgress?: boolean;
+  /** Show the BLD/UTY/MTC group cards. Default true. */
+  showGroupCards?: boolean;
+  /** When true, renders with no wrapping box and the group cards use
+   *  `display: contents` instead of their own grid, so - combined with
+   *  showOverallProgress={false} and showBreakdown={false} - the three
+   *  group cards become plain siblings that drop directly into a parent
+   *  grid (e.g. to sit in the same row as other dashboard cards). */
+  asGridItems?: boolean;
 }
 
 export default function YearlyProgressDashboard({
@@ -76,6 +86,9 @@ export default function YearlyProgressDashboard({
   isLoading: isLoadingProp,
   title = "Preventive Maintenance Progress",
   showBreakdown = true,
+  showOverallProgress = true,
+  showGroupCards = true,
+  asGridItems = false,
 }: YearlyProgressDashboardProps) {
   const isControlled = machinesProp !== undefined && schedulesProp !== undefined && ordersProp !== undefined;
 
@@ -182,14 +195,28 @@ export default function YearlyProgressDashboard({
   }, [effectiveSchedules, effectiveOrders, subByMachineId, selectedYear]);
 
   const overallStats = useMemo(() => {
-    return Object.values(dashboardStats.perSub).reduce(
-      (acc, cur) => ({
-        scheduled: acc.scheduled + cur.scheduled,
-        completed: acc.completed + cur.completed,
-      }),
+    if (selectedMonth === "All") {
+      return Object.values(dashboardStats.perSub).reduce(
+        (acc, cur) => ({
+          scheduled: acc.scheduled + cur.scheduled,
+          completed: acc.completed + cur.completed,
+        }),
+        { scheduled: 0, completed: 0 },
+      );
+    }
+    // A specific month is selected - sum that month's cell across BLD/UTY/MTC
+    // instead of the whole year, same as the per-group cards below already do.
+    return subTabs.reduce(
+      (acc, tab) => {
+        const cell = dashboardStats.perSubMonth[tab.key][selectedMonth];
+        return {
+          scheduled: acc.scheduled + cell.scheduled,
+          completed: acc.completed + cell.completed,
+        };
+      },
       { scheduled: 0, completed: 0 },
     );
-  }, [dashboardStats]);
+  }, [dashboardStats, selectedMonth]);
 
   // Per-month totals across BLD + UTY + MTC, for the breakdown table's "Total" row
   const totalsByMonth = useMemo(
@@ -212,8 +239,11 @@ export default function YearlyProgressDashboard({
   const pct = (completed: number, scheduled: number) =>
     scheduled === 0 ? 0 : Math.min(100, Math.round((completed / scheduled) * 100));
 
+  const Wrapper = asGridItems ? Fragment : "div";
+  const wrapperProps = asGridItems ? {} : { className: "space-y-6" };
+
   return (
-    <div className="space-y-6">
+    <Wrapper {...wrapperProps}>
       {showYearSelector && (
         <ComponentCard title={title}>
           <div className="grid gap-4 md:grid-cols-3">
@@ -254,24 +284,29 @@ export default function YearlyProgressDashboard({
         </ComponentCard>
       )}
 
-      <ComponentCard title={`Overall Progress - ${selectedYear}`}>
-        <div className="mb-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
-          <span>
-            {overallStats.completed} of {overallStats.scheduled} preventive actions completed
-          </span>
-          <Badge size="sm" color={pct(overallStats.completed, overallStats.scheduled) >= 80 ? "success" : "warning"}>
-            {pct(overallStats.completed, overallStats.scheduled)}%
-          </Badge>
-        </div>
-        <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
-          <div
-            className="h-full rounded-full bg-brand-500"
-            style={{ width: `${pct(overallStats.completed, overallStats.scheduled)}%` }}
-          />
-        </div>
-      </ComponentCard>
+      {showOverallProgress && (
+        <ComponentCard
+          title={`Overall Progress - ${selectedMonth === "All" ? selectedYear : `${monthAbbrev[selectedMonth]} ${selectedYear}`}`}
+        >
+          <div className="mb-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
+            <span>
+              {overallStats.completed} of {overallStats.scheduled} preventive actions completed
+            </span>
+            <Badge size="sm" color={pct(overallStats.completed, overallStats.scheduled) >= 80 ? "success" : "warning"}>
+              {pct(overallStats.completed, overallStats.scheduled)}%
+            </Badge>
+          </div>
+          <div className="h-3 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+            <div
+              className="h-full rounded-full bg-brand-500"
+              style={{ width: `${pct(overallStats.completed, overallStats.scheduled)}%` }}
+            />
+          </div>
+        </ComponentCard>
+      )}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      {showGroupCards && (
+      <div className={asGridItems ? "contents" : "grid gap-4 md:grid-cols-3"}>
         {subTabs.map((tab) => {
           const stat =
             selectedMonth === "All" ? dashboardStats.perSub[tab.key] : dashboardStats.perSubMonth[tab.key][selectedMonth];
@@ -301,6 +336,7 @@ export default function YearlyProgressDashboard({
           );
         })}
       </div>
+      )}
 
       {showBreakdown && (
       <ComponentCard title="Monthly Completion Breakdown">
@@ -374,6 +410,6 @@ export default function YearlyProgressDashboard({
         </div>
       </ComponentCard>
       )}
-    </div>
+    </Wrapper>
   );
 }

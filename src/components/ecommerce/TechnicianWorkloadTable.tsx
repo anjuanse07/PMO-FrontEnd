@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
+import { useNavigate } from "react-router";
+import { Modal } from "../ui/modal";
+import Badge from "../ui/badge/Badge";
 import {
   fetchApprovedOrders,
   fetchTechnicians,
@@ -59,6 +62,31 @@ function clockDiffHours(start: string, end: string): number {
   return diffMinutes / 60;
 }
 
+const dateOnlyFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+
+// Formats a date value (which may arrive as a plain "YYYY-MM-DD" or a full
+// ISO timestamp like "2026-08-24T00:00:00.000Z") down to just the date.
+function formatDateOnly(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value.slice(0, 10) : dateOnlyFormatter.format(date);
+}
+
+// Extracts "YYYY-MM-DD" using the LOCAL timezone's calendar date, matching
+// what formatDateOnly displays. A plain string.slice(0, 10) on a UTC ISO
+// timestamp (e.g. "2026-10-19T17:00:00.000Z" for midnight Oct 20 in
+// Jakarta/UTC+7) reads the UTC date, not the local one - one day off from
+// what's shown on screen. Used for filter values, which must agree with it.
+function toLocalDateValue(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 // "Maulana Aldi Firmansyah" -> "MAF", "Nuryanto" -> "NUR"
 function getInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -79,6 +107,14 @@ const rankBadgeStyle = (rank: number) => {
   return "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400";
 };
 
+// Same status -> badge color convention used elsewhere in the app
+// (e.g. PreventiveMaintenanceOrder.tsx, HistoryLogs.tsx).
+function statusBadgeColor(status: ApprovedOrderRecord["status"]): "warning" | "primary" | "success" {
+  if (status === "In Progress") return "warning";
+  if (status === "Approval") return "primary";
+  return "success";
+}
+
 interface TechnicianWorkloadTableProps {
   /** Year to filter to. When provided, hides the internal Year dropdown. */
   year?: number;
@@ -93,6 +129,7 @@ export default function TechnicianWorkloadTable({
   month = "All",
   showYearSelector = true,
 }: TechnicianWorkloadTableProps) {
+  const navigate = useNavigate();
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [technicianRoster, setTechnicianRoster] = useState<TechnicianRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -100,6 +137,7 @@ export default function TechnicianWorkloadTable({
   const [groupBy, setGroupBy] = useState<GroupByField>("technician_main_sub");
   const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
   const [expandedRoles, setExpandedRoles] = useState<Set<string>>(new Set());
+  const [selectedTechnician, setSelectedTechnician] = useState<string | null>(null);
 
   useEffect(() => {
     if (year !== undefined) setSelectedYear(year);
@@ -223,6 +261,24 @@ export default function TechnicianWorkloadTable({
   }, [technicianRoster, technicianStats]);
 
   const maxHours = ranking[0]?.hours || 1;
+
+  // Individual preventive entries for whichever technician's name is
+  // clicked, most recent first - powers the "Detail Teknisi" modal.
+  const selectedTechnicianOrders = useMemo(() => {
+    if (!selectedTechnician) return [];
+    return yearOrders
+      .filter((order) =>
+        (order.technician_name ?? "")
+          .split(",")
+          .map((n) => n.trim())
+          .includes(selectedTechnician),
+      )
+      .sort((a, b) => (b.execution_date || b.preventive_date || "").localeCompare(a.execution_date || a.preventive_date || ""));
+  }, [yearOrders, selectedTechnician]);
+
+  const selectedTechnicianStat = selectedTechnician
+    ? technicianStats.get(selectedTechnician) ?? { planned: 0, completed: 0, hours: 0, days: new Set<string>() }
+    : { planned: 0, completed: 0, hours: 0, days: new Set<string>() };
 
   const toggleRole = (role: string) => {
     setExpandedRoles((prev) => {
@@ -371,11 +427,17 @@ export default function TechnicianWorkloadTable({
                             </thead>
                             <tbody className="divide-y divide-gray-50 dark:divide-white/[0.03]">
                               {group.members.map((member) => (
-                                <tr key={member.technicianName}>
+                                <tr
+                                  key={member.technicianName}
+                                  onClick={() => setSelectedTechnician(member.technicianName)}
+                                  className="cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.03]"
+                                >
                                   <td className="px-3 py-2 pl-10 font-mono text-xs font-semibold text-brand-600 dark:text-brand-400">
                                     {getInitials(member.technicianName)}
                                   </td>
-                                  <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{member.technicianName}</td>
+                                  <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">
+                                    {member.technicianName}
+                                  </td>
                                   {groupBy !== "detail_technician_role" && (
                                     <td className="px-3 py-2 text-xs text-gray-400 dark:text-gray-500">{member.detailRole}</td>
                                   )}
@@ -418,7 +480,11 @@ export default function TechnicianWorkloadTable({
             const rank = idx + 1;
             const barWidth = maxHours === 0 ? 0 : Math.round((tech.hours / maxHours) * 100);
             return (
-              <div key={tech.technicianName} className="flex items-center gap-4">
+              <div
+                key={tech.technicianName}
+                onClick={() => setSelectedTechnician(tech.technicianName)}
+                className="flex cursor-pointer items-center gap-4 rounded-lg p-2 -m-2 hover:bg-gray-50 dark:hover:bg-white/[0.03]"
+              >
                 <span
                   className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${rankBadgeStyle(rank)}`}
                 >
@@ -426,7 +492,7 @@ export default function TechnicianWorkloadTable({
                 </span>
                 <div className="w-48 shrink-0">
                   <p className="text-sm font-semibold text-gray-800 dark:text-white/90">{getInitials(tech.technicianName)}</p>
-                  <p className="truncate text-xs text-gray-400 dark:text-gray-500">{tech.technicianName}</p>
+                  <p className="truncate text-xs font-medium text-gray-700 dark:text-gray-300">{tech.technicianName}</p>
                   <p className="truncate text-[11px] text-gray-300 dark:text-gray-600">{tech.detailRole}</p>
                 </div>
                 <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
@@ -443,6 +509,94 @@ export default function TechnicianWorkloadTable({
           })}
         </div>
       )}
+
+      <Modal
+        isOpen={!!selectedTechnician}
+        onClose={() => setSelectedTechnician(null)}
+        className="max-w-[720px] overflow-hidden rounded-2xl p-0"
+        showCloseButton
+      >
+        {selectedTechnician && (
+          <div className="max-h-[85vh] overflow-y-auto p-6">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+              Technician Detail: {selectedTechnician}
+            </h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">Year {selectedYear}</p>
+
+            <div className="mt-4 grid grid-cols-3 gap-3">
+              <div className="rounded-xl bg-blue-50 p-4 text-center dark:bg-blue-500/10">
+                <p className="text-2xl font-bold text-blue-700 dark:text-blue-400">{selectedTechnicianStat.planned}</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Total PM</p>
+              </div>
+              <div className="rounded-xl bg-green-50 p-4 text-center dark:bg-green-500/10">
+                <p className="text-2xl font-bold text-green-700 dark:text-green-400">{selectedTechnicianStat.days.size}</p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Working Days</p>
+              </div>
+              <div className="rounded-xl bg-yellow-50 p-4 text-center dark:bg-yellow-500/10">
+                <p className="text-2xl font-bold text-yellow-700 dark:text-yellow-400">
+                  {selectedTechnicianStat.hours.toFixed(2)}
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Total Hours</p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              {selectedTechnicianOrders.length === 0 ? (
+                <p className="py-6 text-center text-sm text-gray-400 dark:text-gray-500">
+                  No preventive maintenance found for this technician in {selectedYear}.
+                </p>
+              ) : (
+                selectedTechnicianOrders.map((order) => {
+                  const hours =
+                    order.start_clock && order.end_clock
+                      ? clockDiffHours(order.start_clock, order.end_clock)
+                      : null;
+                  return (
+                    <button
+                      key={order.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedTechnician(null);
+                        const params = new URLSearchParams();
+                        params.set("machine_no", String(order.machine_no));
+                        params.set("technician", selectedTechnician);
+                        const date = toLocalDateValue(order.execution_date || order.preventive_date);
+                        if (date) {
+                          params.set("start_at", date);
+                          params.set("end_at", date);
+                        }
+                        navigate(`/history-logs?${params.toString()}`);
+                      }}
+                      className="flex w-full items-start justify-between gap-3 rounded-xl border border-gray-200 p-4 text-left transition hover:border-brand-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-white/[0.03]"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-brand-600 dark:text-brand-400">
+                            {order.machine_asset}
+                          </span>
+                          <Badge size="sm" color={statusBadgeColor(order.status)}>{order.status}</Badge>
+                        </div>
+                        <p className="mt-1 font-medium text-gray-800 dark:text-white/90">{order.machine_name}</p>
+                        <p className="truncate text-xs text-gray-400 dark:text-gray-500">
+                          {order.location ?? order.department ?? "-"}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="text-sm font-semibold text-gray-800 dark:text-white/90">
+                          {hours !== null ? `${hours.toFixed(2)} hrs` : "-"}
+                        </p>
+                        <p className="text-xs text-gray-400 dark:text-gray-500">
+                          {formatDateOnly(order.execution_date || order.preventive_date)}
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

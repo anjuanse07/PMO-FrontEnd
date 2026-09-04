@@ -11,12 +11,17 @@ import { fetchSchedules, type ScheduleRecord } from "../../services/pmoApi";
  * is a separate pipeline from the order EXECUTION approvals shown in
  * ApprovalStatusMetrics.tsx: Technician -> User/PIC -> Engineering.)
  *
+ * Only two cards are shown: "Draft" entries have no intermediate "in review"
+ * status, so they're the same set as "Pending Engineering Approval" - a
+ * separate "Draft (Pending Engineering)" card would just duplicate that
+ * number, so it's folded into one card here.
+ *
  * Each card is an exclusive bucket, not a cumulative backlog: an entry only
  * counts toward one card, based on the stage it's currently stuck at.
  * "Pending Manager Approval" only counts entries that have already cleared
- * Engineering but not Manager - it does NOT include entries still stuck in
- * Draft (those count under "Draft (Pending Engineering)" instead). As a
- * result the three cards sum to (at most) totalEntries.
+ * Engineering but not Manager - it does NOT include entries still in Draft
+ * (those count under "Pending Engineering Approval" instead). As a result
+ * the two cards sum to (at most) totalEntries.
  *
  * Percentages are relative to the total number of schedule entries created
  * for the selected year (and month, if a specific month is selected via the
@@ -51,22 +56,19 @@ export default function SchedulePlanningStatusMetrics({ year, month = "All" }: S
     void loadData();
   }, []);
 
-  const { totalEntries, draftCount, pendingEngineeringCount, pendingManagerCount } = useMemo(() => {
+  const { totalEntries, pendingEngineeringCount, pendingManagerCount } = useMemo(() => {
     const yearEntries = schedules.filter((s) => s.tahun === currentYear && (month === "All" || s.bulan === month));
     const isDraft = (s: ScheduleRecord) => s.status === "Draft";
     const isEngineeringApproved = (s: ScheduleRecord) => s.status === "Approved by Engineering";
 
     return {
       totalEntries: yearEntries.length,
-      // Entries that haven't started the approval flow yet.
-      draftCount: yearEntries.filter(isDraft).length,
-      // Entries not yet approved by Engineering. Currently the same set as
-      // draftCount, since there's no intermediate "in review" status - kept
-      // as a separate derivation so it stays correct if one is added later.
+      // Entries not yet approved by Engineering (includes plain Draft -
+      // there's no intermediate "in review" status).
       pendingEngineeringCount: yearEntries.filter(isDraft).length,
       // Exclusive: entries that have already cleared Engineering but not
       // yet Manager. Does NOT include entries still stuck in Draft - those
-      // are counted under draftCount/pendingEngineeringCount instead.
+      // are counted under pendingEngineeringCount instead.
       pendingManagerCount: yearEntries.filter(isEngineeringApproved).length,
     };
   }, [schedules, currentYear, month]);
@@ -74,12 +76,6 @@ export default function SchedulePlanningStatusMetrics({ year, month = "All" }: S
   const pct = (count: number) => (totalEntries === 0 ? 0 : Math.round((count / totalEntries) * 100));
 
   const cards = [
-    {
-      key: "draft",
-      label: "Draft (Pending Engineering)",
-      count: draftCount,
-      icon: TaskIcon,
-    },
     {
       key: "pending-engineering",
       label: "Pending Engineering Approval",
@@ -95,7 +91,7 @@ export default function SchedulePlanningStatusMetrics({ year, month = "All" }: S
   ] as const;
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:gap-6">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6">
       {cards.map((card) => {
         const percent = pct(card.count);
         const Icon = card.icon;

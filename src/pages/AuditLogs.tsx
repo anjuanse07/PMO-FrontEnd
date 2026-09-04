@@ -3,6 +3,7 @@ import { getCurrentUser, canViewLogs } from "../auth/auth";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import Button from "../components/ui/button/Button";
+import Badge from "../components/ui/badge/Badge";
 import { exportAuditLogs, exportAuditLogsPdf, fetchAuditLogs, type AuditLogRecord } from "../services/pmoApi";
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -17,6 +18,69 @@ function formatDateTime(value: string) {
 
 function accountName(entry: AuditLogRecord) {
   return entry.user_name || entry.nickname || (entry.user_id ? `User #${entry.user_id}` : "System");
+}
+
+function roleLabel(role: string | null) {
+  if (!role) return "-";
+  return role.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Turns an event_type + its metadata JSON into the same kind of human-readable
+// sentence server.js builds for the CSV export, so the table and CSV always match.
+function describeAuditEvent(entry: AuditLogRecord): string {
+  const meta = (entry.metadata && typeof entry.metadata === "object" ? entry.metadata : {}) as Record<string, unknown>;
+  const list = (value: unknown) => (Array.isArray(value) && value.length ? value.join(", ") : null);
+
+  switch (entry.event_type) {
+    case "LOGIN": return "Signed in to the application";
+    case "LOGOUT": return "Signed out of the application";
+    case "PAGE_VIEW": return `Viewed ${entry.page_path || "a page"}`;
+    case "AUDIT_LOG_EXPORT": return `Exported audit logs (${String(meta.format || "csv").toUpperCase()})`;
+    case "HISTORY_LOG_EXPORT": return "Exported the history log (CSV)";
+    case "HISTORY_LOG_IMPORTED":
+      return `Imported ${Number(meta.inserted) || 0} history log record(s)${meta.skipped ? `, skipped ${meta.skipped}` : ""}`;
+    case "MACHINE_PARAMETER_CREATED": return `Added a parameter to machine #${meta.machineNo ?? entry.entity_id ?? "-"}`;
+    case "MACHINE_PARAMETERS_IMPORTED": return `Imported ${Number(meta.inserted) || 0} machine parameter(s)`;
+    case "MACHINE_PARAMETER_UPDATED": return `Updated parameter fields: ${list(meta.fields) || "-"}`;
+    case "MACHINE_PARAMETER_DELETED": return "Deleted a machine parameter";
+    case "SCHEDULE_PLAN_CREATED": {
+      const month = typeof meta.month === "number" ? MONTH_NAMES[meta.month] : "-";
+      return `Scheduled machine #${meta.machineNo ?? "-"} for ${month} ${meta.year ?? ""} (week ${meta.week ?? "-"})`;
+    }
+    case "SCHEDULE_PLAN_DELETED": return "Deleted a schedule plan";
+    case "SCHEDULE_APPROVED_ENGINEERING": return "Approved a schedule (Engineering stage)";
+    case "SCHEDULE_APPROVED_MANAGER": return "Approved a schedule (Manager stage)";
+    case "MAINTENANCE_ORDER_CREATED": return `Created a preventive order for machine #${meta.machineNo ?? "-"} (status: ${meta.status ?? "-"})`;
+    case "MAINTENANCE_ORDER_UPDATED": return `Updated order fields: ${list(meta.fields) || "-"}`;
+    case "ORDER_CHECKLIST_SAVED": return `Saved checklist (${meta.itemsUpdated ?? 0} item(s) updated)`;
+    case "USER_PROFILE_UPDATED": return `Updated profile fields: ${list(meta.fields) || "-"}`;
+    default:
+      return entry.action_label || entry.event_type.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase());
+  }
+}
+
+type BadgeColor = "success" | "primary" | "error" | "warning" | "info" | "light" | "dark";
+
+// Short verb + color for the Action badge, so activities are scannable at a
+// glance (green = create/approve, blue = update, red = delete, etc).
+function actionMeta(eventType: string): { label: string; color: BadgeColor } {
+  const upper = eventType.toUpperCase();
+  if (upper === "LOGIN") return { label: "Login", color: "primary" };
+  if (upper === "LOGOUT") return { label: "Logout", color: "light" };
+  if (upper === "PAGE_VIEW") return { label: "View", color: "light" };
+  if (upper.includes("DELETED")) return { label: "Delete", color: "error" };
+  if (upper.includes("REJECTED")) return { label: "Reject", color: "warning" };
+  if (upper.includes("APPROVED")) return { label: "Approve", color: "success" };
+  if (upper.includes("IMPORTED")) return { label: "Import", color: "info" };
+  if (upper.includes("EXPORT")) return { label: "Export", color: "info" };
+  if (upper.includes("UPDATED") || upper.includes("SAVED")) return { label: "Update", color: "primary" };
+  if (upper.includes("CREATED")) return { label: "Create", color: "success" };
+  return { label: "Activity", color: "dark" };
 }
 
 function escapeHtml(value: string | number | null | undefined) {
@@ -113,15 +177,23 @@ export default function AuditLogs() {
     setError("");
     try {
       const exportRows = await exportAuditLogsPdf(currentUser.role, currentUser.id, { activity, startAt, endAt });
-      const rows = exportRows.map((entry) => `
+      const actionColors: Record<BadgeColor, string> = {
+        success: "#12b76a", primary: "#465fff", error: "#f04438",
+        warning: "#f79009", info: "#0ba5ec", light: "#98a2b3", dark: "#344054",
+      };
+      const rows = exportRows.map((entry) => {
+        const action = actionMeta(entry.event_type);
+        return `
         <tr>
           <td>${escapeHtml(formatDateTime(entry.created_at))}</td>
+          <td><span style="display:inline-block;padding:2px 8px;border-radius:9999px;background:${actionColors[action.color]};color:#fff;font-weight:700;font-size:9px;">${escapeHtml(action.label.toUpperCase())}</span></td>
+          <td>${escapeHtml(entry.entity_type)}</td>
           <td>${escapeHtml(accountName(entry))}</td>
-          <td>${escapeHtml(entry.event_type)}</td>
-          <td>${escapeHtml(entry.action_label || entry.page_path || entry.entity_type)}</td>
+          <td>${escapeHtml(roleLabel(entry.user_role))}</td>
+          <td>${escapeHtml(describeAuditEvent(entry))}</td>
           <td>${escapeHtml(entry.ip_address)}</td>
-          <td>${escapeHtml(entry.user_agent)}</td>
-        </tr>`).join("");
+        </tr>`;
+      }).join("");
       reportWindow.document.write(`<!doctype html>
         <html><head><title>PMO Audit Logs</title><style>
           @page { size: landscape; margin: 12mm; }
@@ -133,7 +205,7 @@ export default function AuditLogs() {
           th { background: #eaf1ff; font-weight: 700; }
         </style></head><body>
         <h1>PMO Audit Logs</h1><p>Generated ${escapeHtml(new Date().toLocaleString())}. Records: ${exportRows.length}.</p>
-        <table><thead><tr><th>Time</th><th>User</th><th>Activity</th><th>Page / Item</th><th>IP Address</th><th>Browser</th></tr></thead>
+        <table><thead><tr><th>Time</th><th>Action</th><th>Table</th><th>User</th><th>Role</th><th>Description</th><th>IP Address</th></tr></thead>
         <tbody>${rows}</tbody></table></body></html>`);
       reportWindow.document.close();
       reportWindow.focus();
@@ -198,7 +270,19 @@ export default function AuditLogs() {
               <option value="USER_PROFILE_UPDATED">User profile updated</option>
             </select>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => setRefreshKey((value) => value + 1)} disabled={isLoading}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setSearch("");
+                  setActivity("");
+                  setStartAt("");
+                  setEndAt("");
+                  setPage(1);
+                  setRefreshKey((value) => value + 1);
+                }}
+                disabled={isLoading}
+              >
                 Refresh
               </Button>
               <Button size="sm" variant="outline" onClick={() => void exportLogs()} disabled={isExporting}>
@@ -228,32 +312,41 @@ export default function AuditLogs() {
               <table className="min-w-full text-left text-sm">
                 <thead className="border-b border-gray-100 bg-gray-50 text-xs uppercase text-gray-500 dark:border-white/[0.05] dark:bg-white/[0.02] dark:text-gray-400">
                   <tr>
-                    <th className="px-5 py-3 font-medium">Time</th>
+                    <th className="px-5 py-3 font-medium">Timestamp</th>
+                    <th className="px-5 py-3 font-medium">Action</th>
+                    <th className="px-5 py-3 font-medium">Table</th>
                     <th className="px-5 py-3 font-medium">User</th>
-                    <th className="px-5 py-3 font-medium">Activity</th>
-                    <th className="px-5 py-3 font-medium">Page/Item</th>
+                    <th className="px-5 py-3 font-medium">Role</th>
+                    <th className="px-5 py-3 font-medium">Description</th>
                     <th className="px-5 py-3 font-medium">IP Address</th>
-                    <th className="px-5 py-3 font-medium">Browser</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
                   {isLoading ? (
-                    <tr><td className="px-5 py-6 text-gray-500 dark:text-gray-400" colSpan={6}>Loading audit logs...</td></tr>
+                    <tr><td className="px-5 py-6 text-gray-500 dark:text-gray-400" colSpan={7}>Loading audit logs...</td></tr>
                   ) : logs.length === 0 ? (
-                    <tr><td className="px-5 py-6 text-gray-500 dark:text-gray-400" colSpan={6}>No audit events have been recorded yet.</td></tr>
-                  ) : logs.map((entry) => (
-                    <tr key={entry.id} className="align-top text-gray-600 dark:text-gray-300">
-                      <td className="whitespace-nowrap px-5 py-4">{formatDateTime(entry.created_at)}</td>
-                      <td className="px-5 py-4">{accountName(entry)}</td>
-                      <td className="px-5 py-4 font-medium text-gray-800 dark:text-white/90">{entry.event_type}</td>
-                      <td className="max-w-80 px-5 py-4">
-                        <p className="break-words">{entry.action_label || entry.page_path || entry.entity_type || "-"}</p>
-                        {entry.entity_id && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{entry.entity_type}: {entry.entity_id}</p>}
-                      </td>
-                      <td className="whitespace-nowrap px-5 py-4">{entry.ip_address || "-"}</td>
-                      <td className="max-w-64 break-words px-5 py-4 text-xs text-gray-500 dark:text-gray-400">{entry.user_agent || "-"}</td>
-                    </tr>
-                  ))}
+                    <tr><td className="px-5 py-6 text-gray-500 dark:text-gray-400" colSpan={7}>No audit events have been recorded yet.</td></tr>
+                  ) : logs.map((entry) => {
+                    const action = actionMeta(entry.event_type);
+                    return (
+                      <tr key={entry.id} className="align-top text-gray-600 dark:text-gray-300">
+                        <td className="whitespace-nowrap px-5 py-4">{formatDateTime(entry.created_at)}</td>
+                        <td className="px-5 py-4">
+                          <Badge size="sm" color={action.color}>{action.label.toUpperCase()}</Badge>
+                        </td>
+                        <td className="whitespace-nowrap px-5 py-4 font-mono text-xs text-gray-500 dark:text-gray-400">{entry.entity_type || "-"}</td>
+                        <td className="px-5 py-4">
+                          <p className="font-medium text-gray-800 dark:text-white/90">{accountName(entry)}</p>
+                          {entry.nickname && <p className="text-xs text-gray-400 dark:text-gray-500">{entry.nickname}</p>}
+                        </td>
+                        <td className="whitespace-nowrap px-5 py-4">{roleLabel(entry.user_role)}</td>
+                        <td className="max-w-96 px-5 py-4">
+                          <p className="break-words">{describeAuditEvent(entry)}</p>
+                        </td>
+                        <td className="whitespace-nowrap px-5 py-4">{entry.ip_address || "-"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

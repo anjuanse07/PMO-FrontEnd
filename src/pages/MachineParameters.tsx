@@ -419,6 +419,9 @@ export default function MachineParameters() {
               <Button size="sm" variant="outline" onClick={() => setIsImportModalOpen(true)}>
                 Import CSV
               </Button>
+              <Button size="sm" variant="outline" onClick={() => void loadData()} disabled={isLoading}>
+                Refresh
+              </Button>
               <input
                 ref={fileInputRef}
                 type="file"

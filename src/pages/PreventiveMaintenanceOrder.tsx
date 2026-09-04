@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import ComponentCard from "../components/common/ComponentCard";
 import PageMeta from "../components/common/PageMeta";
@@ -85,11 +86,20 @@ const statusTabs: { key: StatusFilter; label: string; icon: string }[] = [
 // Native <input type="date"> requires exactly "YYYY-MM-DD" - anything else
 // (like a full ISO datetime with a time/zone suffix) makes the input render
 // blank even though a value was passed in.
+//
+// IMPORTANT: uses local getters (getFullYear/getMonth/getDate), not
+// toISOString().slice(0,10) - toISOString() converts to UTC first, which
+// silently shifts the date back a day for any timezone ahead of UTC (e.g.
+// Jakarta, UTC+7): a value representing local midnight Oct 20 becomes
+// "2026-10-19T17:00:00.000Z" in UTC, and slicing that reads Oct 19.
 const toDateInputValue = (raw: string | null | undefined): string => {
   if (!raw) return "";
   const parsed = new Date(raw);
   if (Number.isNaN(parsed.getTime())) return "";
-  return parsed.toISOString().slice(0, 10);
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
 
 // Native <input type="time"> requires "HH:MM" - the backend stores clock
@@ -164,6 +174,7 @@ const approvalStageMeta: { key: keyof Approvals; label: string; description: str
 ];
 
 export default function PreventiveMaintenanceOrder() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [isOpen, setIsOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<MaintenanceOrder | null>(null);
   const [technicians, setTechnicians] = useState<string[]>([""]);
@@ -205,9 +216,12 @@ export default function PreventiveMaintenanceOrder() {
   const [maintenanceOrders, setMaintenanceOrders] = useState<MaintenanceOrder[]>([]);
   const [approvedOrdersById, setApprovedOrdersById] = useState<Map<string, ApprovedOrderRecord>>(new Map());
   const [machineParameters, setMachineParameters] = useState<MachineParameterRecord[]>([]);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
 
   useEffect(() => {
     const loadApprovedOrders = async () => {
+      setIsLoadingOrders(true);
       try {
         const rows = await fetchApprovedOrders();
         const mappedOrders: MaintenanceOrder[] = rows.map((row) => ({
@@ -234,6 +248,8 @@ export default function PreventiveMaintenanceOrder() {
         console.error("Failed to load approved orders from backend:", error);
         setMaintenanceOrders([]);
         setApprovedOrdersById(new Map());
+      } finally {
+        setIsLoadingOrders(false);
       }
     };
 
@@ -260,7 +276,7 @@ export default function PreventiveMaintenanceOrder() {
     };
 
     void loadTechnicians();
-  }, []);
+  }, [refreshKey]);
 
   const departmentOptions = useMemo(
     () => Array.from(new Set(maintenanceOrders.map((order) => order.department).filter(Boolean))).sort(),
@@ -498,6 +514,31 @@ export default function PreventiveMaintenanceOrder() {
     setSelectedOrder(null);
   };
 
+  // Deep-link support: /PreventiveMaintenanceOrder?orderId=123 auto-opens
+  // that order's checklist form, e.g. when arriving from the Technician
+  // Workload table's "Detail Teknisi" modal. Waits for maintenanceOrders to
+  // finish loading, then clears the param so it doesn't reopen on refresh
+  // or when navigating back to this page later.
+  useEffect(() => {
+    const orderId = searchParams.get("orderId");
+    if (!orderId || maintenanceOrders.length === 0) return;
+
+    const target = maintenanceOrders.find((order) => order.id === orderId);
+    if (target) {
+      void openForm(target);
+    }
+
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("orderId");
+        return next;
+      },
+      { replace: true },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, maintenanceOrders]);
+
   const addTechnician = () => {
     if (technicians.length >= 7) return;
     setTechnicians((prev) => [...prev, ""]);
@@ -705,36 +746,6 @@ export default function PreventiveMaintenanceOrder() {
       <PageBreadcrumb pageTitle="Preventive Maintenance Orders" />
 
       <div className="space-y-6">
-        <div className="flex flex-wrap gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 dark:border-gray-800 dark:bg-gray-800/40">
-          {statusTabs.map((tab) => {
-            const isActive = statusFilter === tab.key;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                onClick={() => setStatusFilter(tab.key)}
-                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
-                  isActive
-                    ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700"
-                    : "text-gray-500 hover:bg-white/70 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]"
-                }`}
-              >
-                <span aria-hidden="true">{tab.icon}</span>
-                <span>{tab.label}</span>
-                <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    isActive
-                      ? "bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300"
-                      : "bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
-                  }`}
-                >
-                  {statusTabCounts[tab.key]}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-
         <ComponentCard title="Preventive Schedule Filters">
           <div className="grid gap-4 md:grid-cols-4">
             <label className="text-sm text-gray-700 dark:text-gray-300">
@@ -837,16 +848,74 @@ export default function PreventiveMaintenanceOrder() {
 
             <label className="text-sm text-gray-700 dark:text-gray-300">
               <span className="mb-2 block">Search Machine / ID</span>
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search machine or ID"
-                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-              />
+              <div className="flex gap-2">
+                <input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search machine or ID"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelectedYear(today.getFullYear());
+                    setSelectedMonth(today.getMonth());
+                    setSubFilter("All");
+                    setDepartmentFilter("All");
+                    setTypeFilter("All");
+                    setWeekFilter("All");
+                    setSearchQuery("");
+                    setRefreshKey((value) => value + 1);
+                  }}
+                  disabled={isLoadingOrders}
+                  className="shrink-0"
+                >
+                  Refresh
+                </Button>
+              </div>
             </label>
+          </div>
+        </ComponentCard>
 
+        <div className="flex flex-wrap gap-2 rounded-2xl border border-gray-200 bg-gray-50 p-2 dark:border-gray-800 dark:bg-gray-800/40">
+          {statusTabs.map((tab) => {
+            const isActive = statusFilter === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => setStatusFilter(tab.key)}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200 dark:bg-gray-900 dark:text-white dark:ring-gray-700"
+                    : "text-gray-500 hover:bg-white/70 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/[0.04]"
+                }`}
+              >
+                <span aria-hidden="true">{tab.icon}</span>
+                <span>{tab.label}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                    isActive
+                      ? "bg-brand-50 text-brand-600 dark:bg-brand-500/10 dark:text-brand-300"
+                      : "bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                  }`}
+                >
+                  {statusTabCounts[tab.key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-            <label className="flex items-center gap-2 self-center text-sm text-gray-700 dark:text-gray-300">
+        <div className="rounded-2xl border border-gray-200 bg-white dark:border-gray-800 dark:bg-white/[0.03]">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
+            <h3 className="text-base font-medium text-gray-800 dark:text-white/90">
+              {selectedYear === "All" && selectedMonth === "All"
+                ? "Preventive Orders - All Months / All Years"
+                : `Preventive Orders - ${selectedMonth === "All" ? "All Months" : monthNames[selectedMonth]} ${selectedYear === "All" ? "" : selectedYear}`}
+            </h3>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
                 type="checkbox"
                 checked={showCompleted}
@@ -856,15 +925,7 @@ export default function PreventiveMaintenanceOrder() {
               <span>Show Completed</span>
             </label>
           </div>
-        </ComponentCard>
-
-        <ComponentCard
-          title={
-            selectedYear === "All" && selectedMonth === "All"
-              ? "Preventive Orders - All Months / All Years"
-              : `Preventive Orders - ${selectedMonth === "All" ? "All Months" : monthNames[selectedMonth]} ${selectedYear === "All" ? "" : selectedYear}`
-          }
-        >
+          <div className="border-t border-gray-100 p-4 dark:border-gray-800 sm:p-6">
           <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-white/[0.05] dark:bg-white/[0.03]">
             <div className="max-w-full overflow-x-auto">
               <Table>
@@ -982,7 +1043,8 @@ export default function PreventiveMaintenanceOrder() {
               </Table>
             </div>
           </div>
-        </ComponentCard>
+          </div>
+        </div>
       </div>
 
       <Modal isOpen={isOpen} onClose={closeForm} className="max-w-[1200px] overflow-hidden rounded-2xl p-0" showCloseButton>

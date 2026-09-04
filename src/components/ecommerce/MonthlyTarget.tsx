@@ -180,27 +180,29 @@ export default function MonthlyTarget({ year, month, showSelectors = true }: Mon
             </div>
           )}
         </div>
-        <div className="relative ">
-          <div className="max-h-[330px]" id="chartDarkStyle">
-            <Chart
-              options={options}
-              series={series}
-              type="radialBar"
-              height={330}
-            />
-          </div>
+        <div className="flex flex-1 flex-col items-center justify-center">
+          <div className="relative ">
+            <div className="max-h-[330px]" id="chartDarkStyle">
+              <Chart
+                options={options}
+                series={series}
+                type="radialBar"
+                height={330}
+              />
+            </div>
 
-          <span className="absolute left-1/2 top-full -translate-x-1/2 -translate-y-[95%] rounded-full bg-success-50 px-3 py-1 text-xs font-medium text-success-600 dark:bg-success-500/15 dark:text-success-500">
-            {completed}/{targetPlan} done
-          </span>
+            <span className="absolute left-1/2 top-full -translate-x-1/2 -translate-y-[95%] rounded-full bg-success-50 px-3 py-1 text-xs font-medium text-success-600 dark:bg-success-500/15 dark:text-success-500">
+              {completed}/{targetPlan} done
+            </span>
+          </div>
+          <p className="mx-auto mt-10 w-full max-w-[380px] text-center text-sm text-gray-500 dark:text-gray-400 sm:text-base">
+            {isLoading
+              ? "Loading progress..."
+              : targetPlan === 0
+                ? `No preventive actions are scheduled for ${monthNames[selectedMonth]} ${selectedYear} yet.`
+                : `${completed} of ${targetPlan} preventive actions completed for ${monthNames[selectedMonth]} ${selectedYear}.`}
+          </p>
         </div>
-        <p className="mx-auto mt-10 w-full max-w-[380px] text-center text-sm text-gray-500 dark:text-gray-400 sm:text-base">
-          {isLoading
-            ? "Loading progress..."
-            : targetPlan === 0
-              ? `No preventive actions are scheduled for ${monthNames[selectedMonth]} ${selectedYear} yet.`
-              : `${completed} of ${targetPlan} preventive actions completed for ${monthNames[selectedMonth]} ${selectedYear}.`}
-        </p>
       </div>
 
       <div className="mt-auto flex items-center justify-center gap-5 px-6 py-3.5 sm:gap-8 sm:py-5">
@@ -219,7 +221,7 @@ export default function MonthlyTarget({ year, month, showSelectors = true }: Mon
           <p className="mb-1 text-center text-gray-500 text-theme-xs dark:text-gray-400 sm:text-sm">
             Due
           </p>
-          <p className="flex items-center justify-center gap-1 text-base font-semibold text-gray-800 dark:text-white/90 sm:text-lg">
+          <p className="flex items-center justify-center gap-1 text-base font-semibold text-yellow-600 dark:text-yellow-400 sm:text-lg">
             {due}
           </p>
         </div>
@@ -230,7 +232,7 @@ export default function MonthlyTarget({ year, month, showSelectors = true }: Mon
           <p className="mb-1 text-center text-gray-500 text-theme-xs dark:text-gray-400 sm:text-sm">
             Completed
           </p>
-          <p className="flex items-center justify-center gap-1 text-base font-semibold text-gray-800 dark:text-white/90 sm:text-lg">
+          <p className="flex items-center justify-center gap-1 text-base font-semibold text-green-600 dark:text-green-400 sm:text-lg">
             {completed}
           </p>
         </div>

@@ -232,11 +232,14 @@ export default function YearlyPreventiveSchedule() {
     }));
   }, [machineRecords, selectedSub]);
 
-  // The preventive_types table stores codes in `parameter` and full names in `abbreviation`
+  // Converts a plan's stored short code (e.g. "S") to its full descriptive
+  // name (e.g. "Service") for display. Requires the
+  // 20260904_fix_preventive_types_column_swap.sql migration: abbreviation
+  // must hold the short code and parameter must hold the full name.
   const typeLabelByCode = useMemo(() => {
     const map = new Map<string, string>();
     for (const type of preventiveTypes) {
-      map.set(type.parameter, type.abbreviation);
+      map.set(type.abbreviation, type.parameter);
     }
     return map;
   }, [preventiveTypes]);
@@ -434,9 +437,15 @@ export default function YearlyPreventiveSchedule() {
 
       const chosenNames = chosen.map((type) => typeLabelByCode.get(type) ?? type);
 
-      const scheduledDate = new Date(selectedYear, selectedMonth, (selectedWeek - 1) * 7 + 1)
-        .toISOString()
-        .slice(0, 10);
+      // IMPORTANT: extract the date using local getters, not
+      // toISOString().slice(0,10) - new Date(year, month, day) correctly
+      // builds LOCAL midnight for the intended date, but toISOString()
+      // converts that to UTC before slicing, which silently shifts the
+      // saved date back a day for any timezone ahead of UTC (e.g. Jakarta,
+      // UTC+7). This was causing every newly-saved schedule to be stored
+      // one day earlier than the Year/Month/Week actually selected.
+      const scheduledDateObj = new Date(selectedYear, selectedMonth, (selectedWeek - 1) * 7 + 1);
+      const scheduledDate = `${scheduledDateObj.getFullYear()}-${String(scheduledDateObj.getMonth() + 1).padStart(2, "0")}-${String(scheduledDateObj.getDate()).padStart(2, "0")}`;
 
       const mappedMachineId = Number(machine.machineId);
 
@@ -952,22 +961,22 @@ export default function YearlyPreventiveSchedule() {
             ) : (
               <>
                 <div
-                  className="overflow-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
-                  style={{ maxHeight: "460px" }}
+                  className="resize-y overflow-x-hidden overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
+                  style={{ height: "460px", minHeight: "220px", maxHeight: "80vh" }}
                 >
-              <table className="min-w-full border-separate border-spacing-0 text-left">
+              <table className="w-full table-fixed border-separate border-spacing-0 text-left">
                 <thead className="bg-gray-50 dark:bg-gray-800/60">
                   <tr>
-                    <th className="sticky left-0 top-0 z-30 w-48 min-w-[12rem] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
+                    <th className="sticky top-0 z-30 w-32 border-b border-r border-gray-200 bg-gray-50 px-2 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
                       <button
                         onClick={() => handleSort("machine")}
-                        className="flex cursor-pointer items-center gap-2 hover:text-brand-600"
+                        className="flex cursor-pointer items-center gap-1 hover:text-brand-600"
                       >
                         <input
                           type="checkbox"
                           checked={allMachinesSelected}
                           onChange={toggleSelectAll}
-                          className="h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                          className="h-4 w-4 shrink-0 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
                           title="Select all machines"
                         />
                         <span>Machine</span>
@@ -977,21 +986,21 @@ export default function YearlyPreventiveSchedule() {
                       </button>
                     </th>
                     <>
-                      <th className="sticky left-48 top-0 z-30 w-24 min-w-[6rem] border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
+                      <th className="sticky top-0 z-30 w-20 border-b border-r border-gray-200 bg-gray-50 px-2 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
                         <button
                           onClick={() => handleSort("asset")}
-                          className="flex cursor-pointer items-center gap-2 hover:text-brand-600"
+                          className="flex cursor-pointer items-center gap-1 hover:text-brand-600"
                         >
-                          <span>Asset Number</span>
+                          <span>Asset #</span>
                           <span className="ml-1 text-xs">
                             {sortColumn === "asset" && (sortDirection === "asc" ? "↑" : "↓")}
                           </span>
                         </button>
                       </th>
-                      <th className="sticky top-0 z-20 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
+                      <th className="sticky top-0 z-20 w-28 border-b border-r border-gray-200 bg-gray-50 px-2 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200">
                         <button
                           onClick={() => handleSort("location")}
-                          className="flex cursor-pointer items-center gap-2 hover:text-brand-600"
+                          className="flex cursor-pointer items-center gap-1 hover:text-brand-600"
                         >
                           <span>Location</span>
                           <span className="ml-1 text-xs">
@@ -1001,12 +1010,15 @@ export default function YearlyPreventiveSchedule() {
                       </th>
                     </>
                     {(machineTypeOptions[selectedSub] ?? []).map((type) => {
+                      // Requires the 20260904_fix_preventive_types_column_swap.sql
+                      // migration: abbreviation must hold the short code and
+                      // parameter must hold the full descriptive name.
                       const typeData = preventiveTypes.find((t) => t.abbreviation === type);
                       const isTypeSelectedForAll = typeSelectedForAllMachines[type] ?? false;
                       return (
                         <th
                           key={type}
-                          className="sticky top-0 z-20 border-b border-r border-gray-200 bg-gray-50 px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200"
+                          className="sticky top-0 z-20 border-b border-r border-gray-200 bg-gray-50 px-1 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-gray-700 dark:border-gray-700 dark:bg-gray-800/80 dark:text-gray-200"
                           title={typeData?.parameter}
                         >
                           <div className="mb-1 flex cursor-pointer items-center justify-center">
@@ -1018,12 +1030,7 @@ export default function YearlyPreventiveSchedule() {
                               title={`Select ${type} for all machines`}
                             />
                           </div>
-                          <div>{type}</div>
-                          {typeData && (
-                            <div className="text-[9px] font-normal normal-case text-gray-600 dark:text-gray-400">
-                              {typeData.parameter}
-                            </div>
-                          )}
+                          <div className="truncate">{type}</div>
                         </th>
                       );
                     })}
@@ -1032,16 +1039,16 @@ export default function YearlyPreventiveSchedule() {
                 <tbody>
                   {paginatedMachinesForSub.map((machine) => (
                     <tr key={machine.machineId} className="align-middle">
-                      <td className="sticky left-0 z-10 w-48 min-w-[12rem] border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
-                        <div className="font-medium">{machine.machineName}</div>
-                        <div className="text-[11px] text-gray-500 dark:text-gray-400">{machine.machineId}</div>
+                      <td className="w-32 border-b border-r border-gray-200 bg-white px-2 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                        <div className="break-words font-medium">{machine.machineName}</div>
+                        <div className="break-words text-[11px] text-gray-500 dark:text-gray-400">{machine.machineId}</div>
                       </td>
 
                       <>
-                        <td className="sticky left-48 z-10 w-24 min-w-[6rem] border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                        <td className="w-20 border-b border-r border-gray-200 bg-white px-2 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
                           {machine.assetNumber ?? machine.machineId}
                         </td>
-                        <td className="border-b border-r border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                        <td className="w-28 border-b border-r border-gray-200 bg-white px-2 py-3 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
                           {machine.location ?? machine.department ?? "-"}
                         </td>
                       </>
@@ -1051,7 +1058,7 @@ export default function YearlyPreventiveSchedule() {
                         return (
                           <td
                             key={`${machine.machineId}-${type}`}
-                            className="border-b border-r border-gray-200 px-3 py-3 text-center dark:border-gray-700"
+                            className="border-b border-r border-gray-200 px-1 py-3 text-center dark:border-gray-700"
                           >
                             <input
                               type="checkbox"
@@ -1067,6 +1074,9 @@ export default function YearlyPreventiveSchedule() {
                 </tbody>
               </table>
                 </div>
+                <p className="mt-1 text-right text-[11px] text-gray-400 dark:text-gray-500">
+                  ⋰ Drag the bottom-right corner of the table to resize it
+                </p>
 
                 <div className="mt-3 flex flex-col items-center justify-between gap-2 sm:flex-row">
                   <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1115,10 +1125,10 @@ export default function YearlyPreventiveSchedule() {
                   className="flex items-baseline gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm dark:border-white/[0.05] dark:bg-white/[0.02]"
                 >
                   <span className="shrink-0 font-semibold text-gray-800 dark:text-white">
-                    {t.parameter}
+                    {t.abbreviation}
                   </span>
                   <span className="text-gray-500 dark:text-gray-400">-</span>
-                  <span className="text-gray-600 dark:text-gray-300">{t.abbreviation}</span>
+                  <span className="text-gray-600 dark:text-gray-300">{t.parameter}</span>
                 </div>
               ))}
           </div>
@@ -1263,8 +1273,8 @@ export default function YearlyPreventiveSchedule() {
                 >
                   <option value="All">All Types</option>
                   {preventiveTypes.map((type) => (
-                    <option key={type.abbreviation} value={type.abbreviation}>
-                      {type.abbreviation}
+                    <option key={type.abbreviation} value={type.parameter}>
+                      {type.parameter}
                     </option>
                   ))}
                 </select>

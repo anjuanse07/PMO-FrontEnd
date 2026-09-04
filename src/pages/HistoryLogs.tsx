@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { getCurrentUser, canViewLogs } from "../auth/auth";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
@@ -11,9 +12,11 @@ import {
   exportHistoryLogs,
   importHistoryLogs,
   fetchOrderResults,
+  fetchTechnicians,
   type MachineRecord,
   type HistoryLogRecord,
   type HistoryLogImportItem,
+  type TechnicianRecord,
 } from "../services/pmoApi";
 
 // -------------------------------------------------------------------------
@@ -108,7 +111,13 @@ export default function HistoryLogs() {
   // Same allow-list as the backend's isLogViewerRole() in server.js — keep in sync.
   const canViewHistoryLogs = canViewLogs(currentUser);
 
+  // Deep-link support: /history-logs?machine_no=&technician=&start_at=&end_at=
+  // pre-fills the matching filters below, e.g. when arriving from the
+  // Technician Workload table's "Technician Detail" modal.
+  const [searchParams, setSearchParams] = useSearchParams();
+
   const [machines, setMachines] = useState<MachineRecord[]>([]);
+  const [technicians, setTechnicians] = useState<TechnicianRecord[]>([]);
   const [logs, setLogs] = useState<HistoryLogRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -120,11 +129,21 @@ export default function HistoryLogs() {
   const [search, setSearch] = useState("");
   const [mainSub, setMainSub] = useState("");
   const [childSub, setChildSub] = useState("");
-  const [machineNo, setMachineNo] = useState("");
+  const [machineNo, setMachineNo] = useState(() => searchParams.get("machine_no") ?? "");
   const [machineId, setMachineId] = useState("");
+  const [technician, setTechnician] = useState(() => searchParams.get("technician") ?? "");
   const [status, setStatus] = useState("");
-  const [startAt, setStartAt] = useState("");
-  const [endAt, setEndAt] = useState("");
+  const [startAt, setStartAt] = useState(() => searchParams.get("start_at") ?? "");
+  const [endAt, setEndAt] = useState(() => searchParams.get("end_at") ?? "");
+
+  // Clear the deep-link params from the URL once read, so refreshing or
+  // navigating back to this page later doesn't keep re-applying them.
+  useEffect(() => {
+    if (searchParams.has("machine_no") || searchParams.has("technician") || searchParams.has("start_at") || searchParams.has("end_at")) {
+      setSearchParams(new URLSearchParams(), { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Expand/collapse state
   const [collapsedMainSubs, setCollapsedMainSubs] = useState<Set<string>>(new Set());
@@ -140,12 +159,15 @@ export default function HistoryLogs() {
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [resultsError, setResultsError] = useState("");
 
-  // Load machines once
+  // Load machines and technicians once
   useEffect(() => {
     if (!canViewHistoryLogs) return;
     fetchMachines()
       .then(setMachines)
       .catch((err) => console.error("Failed to load machines:", err));
+    fetchTechnicians()
+      .then(setTechnicians)
+      .catch((err) => console.error("Failed to load technicians:", err));
   }, [canViewHistoryLogs]);
 
   // Load history logs whenever a filter changes
@@ -166,6 +188,7 @@ export default function HistoryLogs() {
           childSub,
           machineNo,
           machineId,
+          technician,
           status,
           startAt,
           endAt,
@@ -179,7 +202,7 @@ export default function HistoryLogs() {
     };
 
     void loadLogs();
-  }, [canViewHistoryLogs, currentUserRole, search, mainSub, childSub, machineNo, machineId, status, startAt, endAt, refreshKey]);
+  }, [canViewHistoryLogs, currentUserRole, search, mainSub, childSub, machineNo, machineId, technician, status, startAt, endAt, refreshKey]);
 
   // Child-sub options narrow to whatever main sub is selected
   const childSubOptions = useMemo(() => {
@@ -202,10 +225,15 @@ export default function HistoryLogs() {
   }, [machines, mainSub, childSub]);
 
   useEffect(() => {
-    if (machineNo && !machineOptions.some((m) => String(m.no) === machineNo)) {
+    if (machineNo && machineOptions.length > 0 && !machineOptions.some((m) => String(m.no) === machineNo)) {
       setMachineNo("");
     }
   }, [machineOptions, machineNo]);
+
+  const technicianOptions = useMemo(
+    () => Array.from(new Set(technicians.map((t) => t.technician_name))).sort(),
+    [technicians],
+  );
 
   // Group flat log rows into Main Sub -> Machine -> chronological entries (oldest first)
   const groupedLogs = useMemo<MainSubGroup[]>(() => {
@@ -314,6 +342,7 @@ export default function HistoryLogs() {
         childSub,
         machineNo,
         machineId,
+        technician,
         status,
         startAt,
         endAt,
@@ -437,8 +466,8 @@ export default function HistoryLogs() {
           </select>
         </div>
 
-        {/* Filters row 2: machine name / id + dates */}
-        <div className="grid gap-3 border-b border-gray-100 px-5 py-4 dark:border-white/[0.05] sm:grid-cols-2 lg:grid-cols-4 sm:px-6">
+        {/* Filters row 2: machine name / id / technician + dates */}
+        <div className="grid gap-3 border-b border-gray-100 px-5 py-4 dark:border-white/[0.05] sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 sm:px-6">
           <label className="text-sm text-gray-700 dark:text-gray-300">
             Machine
             <select value={machineNo} onChange={(e) => setMachineNo(e.target.value)} className={`mt-2 ${inputClass}`}>
@@ -458,6 +487,15 @@ export default function HistoryLogs() {
             />
           </label>
           <label className="text-sm text-gray-700 dark:text-gray-300">
+            Technician
+            <select value={technician} onChange={(e) => setTechnician(e.target.value)} className={`mt-2 ${inputClass}`}>
+              <option value="">All Technicians</option>
+              {technicianOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-sm text-gray-700 dark:text-gray-300">
             From
             <input type="date" value={startAt} onChange={(e) => setStartAt(e.target.value)} className={`mt-2 ${inputClass}`} />
           </label>
@@ -469,7 +507,23 @@ export default function HistoryLogs() {
 
         {/* Actions */}
         <div className="flex flex-wrap items-center justify-end gap-2 border-b border-gray-100 px-5 py-4 dark:border-white/[0.05] sm:px-6">
-          <Button size="sm" variant="outline" onClick={() => setRefreshKey((v) => v + 1)} disabled={isLoading}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setSearch("");
+              setMainSub("");
+              setChildSub("");
+              setMachineNo("");
+              setMachineId("");
+              setTechnician("");
+              setStatus("");
+              setStartAt("");
+              setEndAt("");
+              setRefreshKey((v) => v + 1);
+            }}
+            disabled={isLoading}
+          >
             Refresh
           </Button>
           <Button size="sm" variant="outline" onClick={() => void handleExport()} disabled={isExporting}>

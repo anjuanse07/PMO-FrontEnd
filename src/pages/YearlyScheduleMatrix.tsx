@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import ComponentCard from "../components/common/ComponentCard";
 import PageMeta from "../components/common/PageMeta";
@@ -8,9 +8,11 @@ import {
   fetchMachines,
   fetchSchedules,
   fetchApprovedOrders,
+  fetchPreventiveTypes,
   type MachineRecord,
   type ScheduleRecord,
   type ApprovedOrderRecord,
+  type PreventiveTypeRecord,
 } from "../services/pmoApi";
 
 /**
@@ -73,8 +75,8 @@ type MachineRow = {
 
 const splitTypes = (raw: string | null | undefined): string[] =>
   String(raw ?? "")
-    .split(",")
-    .map((type) => type.trim())
+    .split(/[,+/]/)
+    .map((type) => type.trim().replace(/\s+/g, " "))
     .filter(Boolean);
 
 const cellKey = (month: number, week: number) => `${month}-${week}`;
@@ -89,23 +91,26 @@ export default function YearlyScheduleMatrix() {
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
+  const [preventiveTypes, setPreventiveTypes] = useState<PreventiveTypeRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchText, setSearchText] = useState("");
-  const MATRIX_ROWS_PAGE_SIZE = 100;
+  const MATRIX_ROWS_PAGE_SIZE = 20;
   const [currentMatrixPage, setCurrentMatrixPage] = useState(1);
 
   useEffect(() => {
     const loadAll = async () => {
       try {
         setIsLoading(true);
-        const [machines, scheduleRows, orderRows] = await Promise.all([
+        const [machines, scheduleRows, orderRows, typeRows] = await Promise.all([
           fetchMachines(),
           fetchSchedules(),
           fetchApprovedOrders(),
+          fetchPreventiveTypes(),
         ]);
         setMachineRecords(machines);
         setSchedules(scheduleRows);
         setOrders(orderRows);
+        setPreventiveTypes(typeRows);
       } catch (error) {
         console.error("Failed to load yearly schedule matrix data:", error);
       } finally {
@@ -178,6 +183,71 @@ export default function YearlyScheduleMatrix() {
     return map;
   }, [machineRecords]);
 
+  // Some schedule/order rows store the preventive type as its full
+  // descriptive name (e.g. "Service", "Cuci Filter") rather than its short
+  // abbreviation ("S", "CF"). This resolves either form to the short
+  // abbreviation, so the matrix always displays compact codes joined with
+  // " + " (e.g. "S + CF") instead of full names wrapping across lines.
+  //
+  // Requires the 20260904_fix_preventive_types_column_swap.sql migration:
+  // preventive_types.abbreviation must hold the short code and .parameter
+  // must hold the full name (matching what the column names say) for this
+  // to resolve correctly.
+  const normalizeLabel = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+  const abbreviationLookup = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of preventiveTypes) {
+      map.set(normalizeLabel(t.abbreviation), t.abbreviation);
+      map.set(normalizeLabel(t.parameter), t.abbreviation);
+    }
+    return map;
+  }, [preventiveTypes]);
+
+  // Tracks which raw type strings we've already warned about, so the same
+  // unresolved value doesn't spam the console every render. A ref (not
+  // state) since it's just a dedupe cache, not something that should
+  // trigger a re-render - reset it whenever preventiveTypes changes so a
+  // value that previously failed to resolve gets a fresh chance (and a
+  // fresh warning if it still fails) once new reference data loads.
+  const unresolvedTypesWarnedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    unresolvedTypesWarnedRef.current = new Set();
+  }, [preventiveTypes]);
+
+  const resolveAbbreviation = useCallback(
+    (raw: string): string => {
+      const key = normalizeLabel(raw);
+      const exact = abbreviationLookup.get(key);
+      if (exact) return exact;
+
+      // Fuzzy fallback: the stored text might not match the full-name column
+      // word-for-word (e.g. "Cuci Filter AC" vs. the reference table's
+      // "Cuci Filter"). Try a substring match either direction before
+      // giving up and showing the raw text as-is.
+      const fuzzy = preventiveTypes.find((t) => {
+        const full = normalizeLabel(t.parameter);
+        return full.length > 2 && (key.includes(full) || full.includes(key));
+      });
+      if (fuzzy) return fuzzy.abbreviation;
+
+      if (preventiveTypes.length > 0 && !unresolvedTypesWarnedRef.current.has(key)) {
+        unresolvedTypesWarnedRef.current.add(key);
+        console.warn(
+          `[YearlyScheduleMatrix] Could not match preventive type "${raw}" to any known type. ` +
+            `Known names: ${preventiveTypes.map((t) => t.parameter).join(", ")}`,
+        );
+      }
+      return raw;
+    },
+    [abbreviationLookup, preventiveTypes],
+  );
+
+  const splitTypesAsAbbreviations = useCallback(
+    (raw: string | null | undefined): string[] => splitTypes(raw).map(resolveAbbreviation),
+    [resolveAbbreviation],
+  );
+
   // matrix: machineId -> "month-week" -> { types, status }
   // scheduled entries plot yellow; a Completed order upgrades that cell to green
   const matrix = useMemo(() => {
@@ -212,7 +282,7 @@ export default function YearlyScheduleMatrix() {
         String(sched.machine_no),
         sched.bulan,
         sched.minggu,
-        splitTypes(sched.preventive_types),
+        splitTypesAsAbbreviations(sched.preventive_types),
         "scheduled",
       );
     }
@@ -224,13 +294,13 @@ export default function YearlyScheduleMatrix() {
         String(order.machine_no),
         order.month,
         order.week,
-        splitTypes(order.preventive_types),
+        splitTypesAsAbbreviations(order.preventive_types),
         "completed",
       );
     }
 
     return map;
-  }, [schedules, orders, selectedYear]);
+  }, [schedules, orders, selectedYear, splitTypesAsAbbreviations]);
 
   const currentMachines = useMemo(() => {
     if (activeTab === "Dashboard") return [];
@@ -304,6 +374,261 @@ export default function YearlyScheduleMatrix() {
 
   const pct = (completed: number, scheduled: number) =>
     scheduled === 0 ? 0 : Math.min(100, Math.round((completed / scheduled) * 100));
+
+  // ------------------------------------------------------------------
+  // Export (CSV / Excel / PDF), matching the uploaded YEARLY_Excel_Template
+  // layout: NO MESIN | NAMA MESIN | DAYA/KAPASITAS | NAMA RUANG |
+  // INTERVAL | JAN..DES (each split into W1-W5) | KETERANGAN.
+  //
+  // Always exports the FULL machine list for the active sub and all 12
+  // months, regardless of the on-screen search box or Months chips - this
+  // is meant to be the complete official record for the year, not a
+  // narrowed view of what's currently on screen.
+  // ------------------------------------------------------------------
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [exportError, setExportError] = useState("");
+
+  const monthAbbrevID = ["JAN", "FEB", "MAR", "APR", "MEI", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DES"];
+
+  const buildExportRows = () => {
+    if (activeTab === "Dashboard") return [];
+    return (machinesBySub.get(activeTab) ?? []).map((machine) => ({
+      machine,
+      weeks: Array.from({ length: 12 }, (_, month) =>
+        Array.from({ length: WEEKS_PER_MONTH }, (_, i) => matrix.get(machine.machineId)?.get(cellKey(month, i + 1)) ?? null),
+      ),
+    }));
+  };
+
+  const exportEscapeCsv = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+  const exportEscapeHtml = (value: unknown) =>
+    String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c] || c));
+
+  const handleExportCsv = () => {
+    if (activeTab === "Dashboard") return;
+    const rows = buildExportRows();
+
+    const monthHeaderRow = ["NO MESIN", "NAMA MESIN", "DAYA / KAPASITAS", "NAMA RUANG", "INTERVAL (BULAN / SEKALI)"];
+    monthAbbrevID.forEach((m) => monthHeaderRow.push(m, "", "", "", ""));
+    monthHeaderRow.push("KETERANGAN");
+
+    const weekHeaderRow = ["", "", "", "", ""];
+    for (let m = 0; m < 12; m++) weekHeaderRow.push("1", "2", "3", "4", "5");
+    weekHeaderRow.push("");
+
+    const dataRows = rows.map(({ machine, weeks }) => {
+      const row = [machine.assetNumber, machine.machineName, "", machine.location ?? "", ""];
+      weeks.forEach((month) => month.forEach((cell) => row.push(cell?.types.join(" + ") ?? "")));
+      row.push("");
+      return row;
+    });
+
+    const csv = [
+      [`YEARLY PREVENTIVE ENGINEERING SCHEDULE - ${activeTab} SUB DEPARTMENT (${selectedYear})`],
+      [],
+      monthHeaderRow,
+      weekHeaderRow,
+      ...dataRows,
+    ]
+      .map((line) => line.map(exportEscapeCsv).join(","))
+      .join("\r\n");
+
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Yearly_Schedule_${activeTab}_${selectedYear}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPdf = () => {
+    if (activeTab === "Dashboard") return;
+    const reportWindow = window.open("", "_blank");
+    if (!reportWindow) {
+      setExportError("Allow pop-ups in your browser to export the PDF.");
+      return;
+    }
+
+    const rows = buildExportRows();
+    const monthHeaderCells = monthAbbrevID.map((m) => `<th colspan="5">${m}</th>`).join("");
+    const weekHeaderCells = Array.from({ length: 12 }, () => "<th>1</th><th>2</th><th>3</th><th>4</th><th>5</th>").join("");
+
+    const bodyRows = rows
+      .map(({ machine, weeks }) => {
+        const weekCells = weeks
+          .map((month) =>
+            month
+              .map((cell) => {
+                const bg = cell?.status === "completed" ? "#bbf7d0" : cell?.status === "scheduled" ? "#fef08a" : "";
+                return `<td style="background:${bg};">${exportEscapeHtml(cell?.types.join(" + ") ?? "")}</td>`;
+              })
+              .join(""),
+          )
+          .join("");
+        return `<tr>
+          <td>${exportEscapeHtml(machine.assetNumber)}</td>
+          <td>${exportEscapeHtml(machine.machineName)}</td>
+          <td></td>
+          <td>${exportEscapeHtml(machine.location)}</td>
+          <td></td>
+          ${weekCells}
+          <td></td>
+        </tr>`;
+      })
+      .join("");
+
+    reportWindow.document.write(`<!doctype html>
+      <html><head><title>Yearly Schedule - ${exportEscapeHtml(activeTab)} ${selectedYear}</title><style>
+        @page { size: A3 landscape; margin: 10mm; }
+        body { color: #111; font: 8px Arial, sans-serif; }
+        h1 { font-size: 14px; text-align: center; margin: 0 0 10px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #999; padding: 2px 3px; text-align: center; }
+        th { background: #f1f5f9; font-weight: 700; }
+        td:nth-child(1), td:nth-child(2), td:nth-child(4) { text-align: left; }
+      </style></head><body>
+      <h1>YEARLY PREVENTIVE ENGINEERING SCHEDULE - ${exportEscapeHtml(activeTab)} SUB DEPARTMENT (${selectedYear})</h1>
+      <table>
+        <thead>
+          <tr><th rowspan="2">NO MESIN</th><th rowspan="2">NAMA MESIN</th><th rowspan="2">DAYA / KAPASITAS</th>
+              <th rowspan="2">NAMA RUANG</th><th rowspan="2">INTERVAL</th>${monthHeaderCells}<th rowspan="2">KETERANGAN</th></tr>
+          <tr>${weekHeaderCells}</tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+      </body></html>`);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
+  };
+
+  const handleExportExcel = async () => {
+    if (activeTab === "Dashboard") return;
+    setIsExportingExcel(true);
+    setExportError("");
+    try {
+      const ExcelJS = (await import("exceljs")).default;
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet(`${selectedYear} (${activeTab})`);
+
+      const totalCols = 5 + 12 * WEEKS_PER_MONTH + 1; // fixed cols + 12 months x 5 weeks + notes
+      sheet.columns = [
+        { width: 12 }, { width: 28 }, { width: 18 }, { width: 24 }, { width: 14 },
+        ...Array.from({ length: 12 * WEEKS_PER_MONTH }, () => ({ width: 5 })),
+        { width: 22 },
+      ];
+
+      // Title row
+      sheet.mergeCells(1, 1, 1, totalCols);
+      const titleCell = sheet.getCell(1, 1);
+      titleCell.value = `YEARLY PREVENTIVE ENGINEERING SCHEDULE\n${activeTab} SUB DEPARTMENT (${selectedYear})`;
+      titleCell.font = { name: "Arial", size: 16, bold: true };
+      titleCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      sheet.getRow(1).height = 40;
+
+      // Fixed-column headers (span rows 3-5, matching the template)
+      const headerRow = 3;
+      const fixedHeaders = ["NO MESIN", "NAMA MESIN", "DAYA / KAPASITAS", "NAMA RUANG", "INTERVAL (BULAN / SEKALI)"];
+      fixedHeaders.forEach((label, idx) => {
+        const col = idx + 1;
+        sheet.mergeCells(headerRow, col, headerRow + 2, col);
+        const cell = sheet.getCell(headerRow, col);
+        cell.value = label;
+        cell.font = { name: "Verdana", size: 8, bold: true };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+        cell.border = { top: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" }, bottom: { style: "thin" } };
+      });
+
+      // Month headers (row 3-4 merged, spanning 5 week-columns each) + week numbers (row 5)
+      monthAbbrevID.forEach((month, mIdx) => {
+        const startCol = 6 + mIdx * WEEKS_PER_MONTH;
+        sheet.mergeCells(headerRow, startCol, headerRow + 1, startCol + WEEKS_PER_MONTH - 1);
+        const monthCell = sheet.getCell(headerRow, startCol);
+        monthCell.value = month;
+        monthCell.font = { name: "Verdana", size: 8, bold: true };
+        monthCell.alignment = { horizontal: "center", vertical: "middle" };
+
+        for (let w = 0; w < WEEKS_PER_MONTH; w++) {
+          const col = startCol + w;
+          const weekCell = sheet.getCell(headerRow + 2, col);
+          weekCell.value = w + 1;
+          weekCell.font = { name: "Verdana", size: 8 };
+          weekCell.alignment = { horizontal: "center", vertical: "middle" };
+          for (let r = headerRow; r <= headerRow + 2; r++) {
+            sheet.getCell(r, col).border = { top: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" }, bottom: { style: "thin" } };
+          }
+        }
+      });
+
+      // Notes column header
+      const notesCol = totalCols;
+      sheet.mergeCells(headerRow, notesCol, headerRow + 2, notesCol);
+      const notesHeader = sheet.getCell(headerRow, notesCol);
+      notesHeader.value = "KETERANGAN";
+      notesHeader.font = { name: "Verdana", size: 8, bold: true };
+      notesHeader.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      notesHeader.border = { top: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" }, bottom: { style: "thin" } };
+
+      // Data rows
+      const rows = buildExportRows();
+      let r = headerRow + 3;
+      for (const { machine, weeks } of rows) {
+        sheet.getCell(r, 1).value = machine.assetNumber;
+        sheet.getCell(r, 2).value = machine.machineName;
+        sheet.getCell(r, 3).value = "";
+        sheet.getCell(r, 4).value = machine.location ?? "";
+        sheet.getCell(r, 5).value = "";
+
+        for (let c = 1; c <= 5; c++) {
+          const cell = sheet.getCell(r, c);
+          cell.font = { name: "Verdana", size: 8, bold: c === 1 };
+          cell.alignment = { horizontal: c === 1 ? "center" : "left", vertical: "middle", wrapText: true };
+          cell.border = { top: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" }, bottom: { style: "thin" } };
+        }
+
+        weeks.forEach((month, mIdx) => {
+          month.forEach((cellData, wIdx) => {
+            const col = 6 + mIdx * WEEKS_PER_MONTH + wIdx;
+            const cell = sheet.getCell(r, col);
+            cell.value = cellData?.types.join(" + ") ?? "";
+            cell.font = { name: "Verdana", size: 8 };
+            cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+            cell.border = { top: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" }, bottom: { style: "thin" } };
+            if (cellData?.status === "completed") {
+              cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF92D050" } };
+            } else if (cellData?.status === "scheduled") {
+              cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFE066" } };
+            }
+          });
+        });
+
+        const notesCell = sheet.getCell(r, notesCol);
+        notesCell.value = "";
+        notesCell.border = { top: { style: "thin" }, left: { style: "thin" }, right: { style: "thin" }, bottom: { style: "thin" } };
+
+        r += 1;
+      }
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `Yearly_Schedule_${activeTab}_${selectedYear}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Excel export failed:", error);
+      setExportError(
+        error instanceof Error && /Cannot find module|Failed to fetch dynamically imported module/.test(error.message)
+          ? 'Excel export needs the "exceljs" package - run `npm install exceljs` in the frontend project.'
+          : "Failed to export Excel file.",
+      );
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
 
   return (
     <>
@@ -430,12 +755,43 @@ export default function YearlyScheduleMatrix() {
                 : monthsToShow.map((m) => monthAbbrev[m]).join(", ")
             } ${selectedYear})`}
           >
-            <div className="mb-3 text-sm text-gray-600 dark:text-gray-300">
-              {dashboardStats.perSub[activeTab].completed} of{" "}
-              {dashboardStats.perSub[activeTab].scheduled} scheduled entries completed (
-              {pct(dashboardStats.perSub[activeTab].completed, dashboardStats.perSub[activeTab].scheduled)}
-              %)
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-gray-600 dark:text-gray-300">
+                {dashboardStats.perSub[activeTab].completed} of{" "}
+                {dashboardStats.perSub[activeTab].scheduled} scheduled entries completed (
+                {pct(dashboardStats.perSub[activeTab].completed, dashboardStats.perSub[activeTab].scheduled)}
+                %)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportCsv}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExportExcel()}
+                  disabled={isExportingExcel}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  {isExportingExcel ? "Exporting..." : "Export Excel"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportPdf}
+                  className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  Export PDF
+                </button>
+              </div>
             </div>
+            {exportError && (
+              <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300">
+                {exportError}
+              </div>
+            )}
 
             <div className="overflow-auto rounded-xl border border-gray-200 dark:border-white/[0.05]" style={{ maxHeight: "70vh" }}>
               <table className="border-collapse text-[10px]">
@@ -520,10 +876,10 @@ export default function YearlyScheduleMatrix() {
                           return (
                             <td
                               key={`${machine.machineId}-${month}-${week}`}
-                              className={`whitespace-pre-line border border-gray-200 px-1 py-1 text-center text-gray-800 dark:border-white/[0.05] dark:text-gray-100 ${bg}`}
+                              className={`whitespace-nowrap border border-gray-200 px-1 py-1 text-center text-[9px] font-semibold text-gray-800 dark:border-white/[0.05] dark:text-gray-100 ${bg}`}
                               title={cell?.types.join(" + ")}
                             >
-                              {cell?.types.join("\n") ?? ""}
+                              {cell?.types.join(" + ") ?? ""}
                             </td>
                           );
                         }),

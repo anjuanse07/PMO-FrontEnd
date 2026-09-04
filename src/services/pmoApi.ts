@@ -401,6 +401,7 @@ export type AuditLogRecord = {
   user_id: number | null;
   nickname: string | null;
   user_name: string | null;
+  user_role: string | null;
   session_id: string | null;
   event_type: string;
   entity_type: string | null;
@@ -539,6 +540,7 @@ export type HistoryLogFilters = {
   machineNo?: string;
   machineName?: string;
   machineId?: string;
+  technician?: string;
   status?: string;
   startAt?: string;
   endAt?: string;
@@ -553,6 +555,7 @@ function buildHistoryLogParams(filters: HistoryLogFilters): URLSearchParams {
   if (filters.machineNo) params.set("machine_no", filters.machineNo);
   if (filters.machineName) params.set("machine_name", filters.machineName);
   if (filters.machineId) params.set("machine_id", filters.machineId);
+  if (filters.technician) params.set("technician", filters.technician);
   if (filters.status) params.set("status", filters.status);
   if (filters.startAt) params.set("start_at", filters.startAt);
   if (filters.endAt) params.set("end_at", filters.endAt);

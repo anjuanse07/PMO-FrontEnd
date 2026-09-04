@@ -79,6 +79,12 @@ export const defaultMachineTypeOptions: Record<MachineSub, PreventiveType[]> = {
 
 export let machineTypeOptions: Record<MachineSub, PreventiveType[]> = defaultMachineTypeOptions;
 
+// NOTE: not currently called anywhere in the app (machineTypeOptions always
+// stays as defaultMachineTypeOptions above) - kept for whenever live
+// preventive_types data needs to replace the static list.
+//
+// Requires the 20260904_fix_preventive_types_column_swap.sql migration:
+// abbreviation must hold the short code (e.g. "S") for this to be correct.
 export function buildMachineTypeOptions(
   preventiveTypes: Array<{ abbreviation: string; parameter?: string }>
 ): Record<MachineSub, PreventiveType[]> {

@@ -18,9 +18,14 @@ interface EcommerceMetricsProps {
   year?: number;
   /** Month to filter to (0-11), or "All" for the full year. Defaults to "All". */
   month?: number | "All";
+  /** Overrides the wrapping grid's className. Pass "contents" to make the
+   *  two cards plain siblings that drop directly into a parent grid instead
+   *  of keeping their own 2-column grid (e.g. to sit in the same row as
+   *  other dashboard cards). Defaults to the normal 2-column grid. */
+  className?: string;
 }
 
-export default function EcommerceMetrics({ year, month = "All" }: EcommerceMetricsProps) {
+export default function EcommerceMetrics({ year, month = "All", className }: EcommerceMetricsProps) {
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -60,7 +65,7 @@ export default function EcommerceMetrics({ year, month = "All" }: EcommerceMetri
   const periodLabel = month === "All" ? `${currentYear}` : `${monthNames[month]} ${currentYear}`;
 
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6">
+    <div className={className ?? "grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6"}>
       {/* <!-- Metric Item Start --> */}
       <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-white/[0.03] md:p-6">
         <div className="flex items-center justify-center w-12 h-12 bg-gray-100 rounded-xl dark:bg-gray-800">
