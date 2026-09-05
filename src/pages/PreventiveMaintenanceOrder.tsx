@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
+import { useApprovedOrders, invalidateScheduleData } from "../hooks/useScheduleData";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import ComponentCard from "../components/common/ComponentCard";
 import PageMeta from "../components/common/PageMeta";
@@ -15,7 +16,6 @@ import {
 import Badge from "../components/ui/badge/Badge";
 import { type MaintenanceOrder } from "../data/preventiveMaintenanceData";
 import {
-  fetchApprovedOrders,
   fetchMachineParameters,
   fetchOrderResults,
   saveOrderResults,
@@ -213,48 +213,40 @@ export default function PreventiveMaintenanceOrder() {
     approvals: emptyApprovals(),
   });
 
-  const [maintenanceOrders, setMaintenanceOrders] = useState<MaintenanceOrder[]>([]);
-  const [approvedOrdersById, setApprovedOrdersById] = useState<Map<string, ApprovedOrderRecord>>(new Map());
+  // Unscoped ("All" years) - yearOptions further down needs to see every
+  // year that has ever had order data, not just one specific year.
+  const { orders: approvedOrderRows, isLoadingOrders, refetchOrders } = useApprovedOrders("All");
   const [machineParameters, setMachineParameters] = useState<MachineParameterRecord[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+
+  const maintenanceOrders: MaintenanceOrder[] = useMemo(
+    () =>
+      approvedOrderRows.map((row) => ({
+        id: String(row.id),
+        machineId: row.machine_asset || String(row.machine_no),
+        machineAsset: row.machine_asset,
+        machineNo: row.machine_no,
+        machineName: row.machine_name,
+        location: row.location,
+        department: row.department || "Unassigned",
+        sub: row.sub,
+        preventiveDate: row.preventive_date || "",
+        status: row.status,
+        technician: row.technician_name || "Planner",
+        year: row.year,
+        month: row.month,
+        week: row.week,
+        machineType: row.preventive_types,
+      })),
+    [approvedOrderRows],
+  );
+
+  const approvedOrdersById: Map<string, ApprovedOrderRecord> = useMemo(
+    () => new Map(approvedOrderRows.map((row) => [String(row.id), row])),
+    [approvedOrderRows],
+  );
 
   useEffect(() => {
-    const loadApprovedOrders = async () => {
-      setIsLoadingOrders(true);
-      try {
-        const rows = await fetchApprovedOrders();
-        const mappedOrders: MaintenanceOrder[] = rows.map((row) => ({
-          id: String(row.id),
-          machineId: row.machine_asset || String(row.machine_no),
-          machineAsset: row.machine_asset,
-          machineNo: row.machine_no,
-          machineName: row.machine_name,
-          location: row.location,
-          department: row.department || "Unassigned",
-          sub: row.sub,
-          preventiveDate: row.preventive_date || "",
-          status: row.status,
-          technician: row.technician_name || "Planner",
-          year: row.year,
-          month: row.month,
-          week: row.week,
-          machineType: row.preventive_types,
-        }));
-
-        setMaintenanceOrders(mappedOrders);
-        setApprovedOrdersById(new Map(rows.map((row) => [String(row.id), row])));
-      } catch (error) {
-        console.error("Failed to load approved orders from backend:", error);
-        setMaintenanceOrders([]);
-        setApprovedOrdersById(new Map());
-      } finally {
-        setIsLoadingOrders(false);
-      }
-    };
-
-    void loadApprovedOrders();
-
     const loadMachineParameters = async () => {
       try {
         const parameters = await fetchMachineParameters();
@@ -355,18 +347,29 @@ export default function PreventiveMaintenanceOrder() {
       Completed: 0,
     };
     for (const order of baseFilteredOrders) {
-      counts.All += 1;
+      // "All" only counts orders that are actually visible right now - a
+      // Completed order hidden by the Show Completed checkbox shouldn't
+      // inflate the All count, same as Scheduled Preventive Entries' own
+      // "All" tab excludes entries hidden by its equivalent checkbox.
+      if (showCompleted || order.status !== "Completed") {
+        counts.All += 1;
+      }
       if (order.status === "In Progress") {
         counts["In Progress"] += 1;
       } else if (order.status === "Completed") {
-        counts.Completed += 1;
+        // Don't count a Completed order toward its own tab's badge while
+        // it's hidden by the Show Completed checkbox - hidden means fully
+        // hidden, not "hidden but hinted at via a count".
+        if (showCompleted) {
+          counts.Completed += 1;
+        }
       } else {
         const stage = getApprovalStage(order, approvedOrdersById);
         if (stage) counts[stage] += 1;
       }
     }
     return counts;
-  }, [baseFilteredOrders, approvedOrdersById]);
+  }, [baseFilteredOrders, approvedOrdersById, showCompleted]);
 
   const handleOrderSort = (column: OrderSortColumn) => {
     if (orderSortColumn === column) {
@@ -384,10 +387,10 @@ export default function PreventiveMaintenanceOrder() {
         (statusFilter === "In Progress" || statusFilter === "Completed"
           ? order.status === statusFilter
           : getApprovalStage(order, approvedOrdersById) === statusFilter);
-      // The "Show Completed" checkbox only makes sense while browsing "All" (or
-      // a non-Completed tab, where it's a no-op anyway) - if the person has
-      // explicitly clicked the Completed tab, always show completed orders.
-      const matchesShowCompleted = showCompleted || order.status !== "Completed" || statusFilter === "Completed";
+      // The "Show Completed" checkbox is a strict master switch - a
+      // Completed order stays hidden even if the Completed tab itself is
+      // selected, same as Scheduled Preventive Entries' equivalent checkbox.
+      const matchesShowCompleted = showCompleted || order.status !== "Completed";
 
       return matchesStatus && matchesShowCompleted;
     });
@@ -414,6 +417,37 @@ export default function PreventiveMaintenanceOrder() {
       return orderSortDirection === "asc" ? comparison : -comparison;
     });
   }, [baseFilteredOrders, approvedOrdersById, statusFilter, showCompleted, orderSortColumn, orderSortDirection]);
+
+  const ORDERS_PAGE_SIZE = 25;
+  const [currentOrdersPage, setCurrentOrdersPage] = useState(1);
+
+  // Reset to page 1 whenever the filtered/sorted order list changes underneath the table
+  useEffect(() => {
+    setCurrentOrdersPage(1);
+  }, [
+    selectedYear,
+    selectedMonth,
+    subFilter,
+    departmentFilter,
+    typeFilter,
+    weekFilter,
+    searchQuery,
+    statusFilter,
+    showCompleted,
+    orderSortColumn,
+    orderSortDirection,
+  ]);
+
+  const ordersPageCount = Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentOrdersPage((page) => Math.min(page, ordersPageCount));
+  }, [ordersPageCount]);
+
+  const paginatedOrders = useMemo(() => {
+    const start = (currentOrdersPage - 1) * ORDERS_PAGE_SIZE;
+    return filteredOrders.slice(start, start + ORDERS_PAGE_SIZE);
+  }, [filteredOrders, currentOrdersPage]);
 
   const openForm = async (order: MaintenanceOrder) => {
     setSelectedOrder(order);
@@ -679,42 +713,12 @@ export default function PreventiveMaintenanceOrder() {
 
       await saveOrderResults(orderId, resultItems);
 
-      setMaintenanceOrders((prev) =>
-        prev.map((order) =>
-          order.id === selectedOrder.id
-            ? {
-              ...order,
-              machineAsset: formData.machineAssetNumber || order.machineAsset,
-              preventiveDate: formData.preventiveDate,
-              technician: techniciansText || order.technician,
-              status: nextStatus,
-            }
-            : order,
-        ),
-      );
-
-      setApprovedOrdersById((prev) => {
-        const next = new Map(prev);
-        const existing = next.get(selectedOrder.id);
-        if (existing) {
-          next.set(selectedOrder.id, {
-            ...existing,
-            machine_asset: formData.machineAssetNumber || existing.machine_asset,
-            preventive_date: formData.preventiveDate || null,
-            start_clock: formData.preventiveTimeStart ? `${formData.preventiveTimeStart}:00` : null,
-            end_clock: formData.preventiveTimeEnd ? `${formData.preventiveTimeEnd}:00` : null,
-            technician_name: techniciansText || existing.technician_name,
-            status: nextStatus,
-            approved_by_technician_date: formData.approvals.technician.approvedAt || null,
-            approved_by_technician_user: formData.approvals.technician.approvedBy || null,
-            approved_by_pic_date: formData.approvals.user.approvedAt || null,
-            approved_by_pic_user: formData.approvals.user.approvedBy || null,
-            approved_by_engineering_date: formData.approvals.engineering.approvedAt || null,
-            approved_by_engineering_user: formData.approvals.engineering.approvedBy || null,
-          });
-        }
-        return next;
-      });
+      // maintenanceOrders/approvedOrdersById are derived from the shared
+      // cache now, not local state - invalidate it and refetch so this
+      // page (and every other component reading the same cached data)
+      // picks up the change immediately instead of waiting out the TTL.
+      invalidateScheduleData();
+      await refetchOrders();
 
       if (formData.approvals.engineering.approved) {
         setIsRecordLocked(true);
@@ -867,6 +871,7 @@ export default function PreventiveMaintenanceOrder() {
                     setWeekFilter("All");
                     setSearchQuery("");
                     setRefreshKey((value) => value + 1);
+                    void refetchOrders();
                   }}
                   disabled={isLoadingOrders}
                   className="shrink-0"
@@ -948,7 +953,7 @@ export default function PreventiveMaintenanceOrder() {
                 </TableHeader>
 
                 <TableBody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                  {filteredOrders.map((order) => {
+                  {paginatedOrders.map((order) => {
                     const rawOrder = approvedOrdersById.get(order.id);
                     const approvalStages: { label: string; user: string; date: string }[] = [];
                     if (rawOrder?.approved_by_technician_user) {
@@ -1041,6 +1046,38 @@ export default function PreventiveMaintenanceOrder() {
                   })}
                 </TableBody>
               </Table>
+            </div>
+
+            <div className="mt-3 flex flex-col items-center justify-between gap-2 px-1 sm:flex-row">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {filteredOrders.length === 0
+                  ? "No orders found"
+                  : `Showing ${(currentOrdersPage - 1) * ORDERS_PAGE_SIZE + 1}-${Math.min(
+                      currentOrdersPage * ORDERS_PAGE_SIZE,
+                      filteredOrders.length,
+                    )} of ${filteredOrders.length} orders`}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentOrdersPage((page) => Math.max(1, page - 1))}
+                  disabled={currentOrdersPage <= 1}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-gray-600 dark:text-gray-300">
+                  Page {currentOrdersPage} of {ordersPageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentOrdersPage((page) => Math.min(ordersPageCount, page + 1))}
+                  disabled={currentOrdersPage >= ordersPageCount}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </div>
           </div>

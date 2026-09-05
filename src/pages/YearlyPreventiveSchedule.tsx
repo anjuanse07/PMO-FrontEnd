@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useApprovedOrders, invalidateScheduleData } from "../hooks/useScheduleData";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import ComponentCard from "../components/common/ComponentCard";
 import PageMeta from "../components/common/PageMeta";
@@ -14,11 +15,9 @@ import {
 import {
   createSchedulePlan,
   deleteSchedulePlan,
-  fetchApprovedOrders,
   fetchMachines,
   fetchPreventiveTypes,
   fetchSchedules,
-  type ApprovedOrderRecord,
   type MachineRecord,
   type ScheduleRecord,
   updateScheduleStatus,
@@ -114,7 +113,10 @@ export default function YearlyPreventiveSchedule() {
   // Approved Orders, fetched purely to detect which "Approved by Manager"
   // schedule entries already have a Completed order behind them, so the
   // Scheduled Preventive Entries table can offer a real "Completed" tab.
-  const [approvedOrders, setApprovedOrders] = useState<ApprovedOrderRecord[]>([]);
+  // Read-only here (never locally mutated), so safe to source from the
+  // shared cache. Unscoped ("All" years) since yearOptions further down
+  // needs to see every year that has ever had data.
+  const { orders: approvedOrders } = useApprovedOrders("All");
 
   // Scheduled entries filters
   const [scheduledSubFilter, setScheduledSubFilter] = useState<MachineSub | "All">("All");
@@ -191,19 +193,6 @@ export default function YearlyPreventiveSchedule() {
     };
 
     void loadPlans();
-  }, []);
-
-  useEffect(() => {
-    const loadApprovedOrders = async () => {
-      try {
-        const orders = await fetchApprovedOrders();
-        setApprovedOrders(orders);
-      } catch (error) {
-        console.error("Failed to load approved orders for Completed-status detection:", error);
-      }
-    };
-
-    void loadApprovedOrders();
   }, []);
 
   useEffect(() => {
@@ -506,6 +495,7 @@ export default function YearlyPreventiveSchedule() {
     setPlans(updated);
     writeScheduledPlans(updated);
     setSelectedTypes({});
+    invalidateScheduleData();
   };
 
   const removeScheduledPlan = async (entryId: string) => {
@@ -527,6 +517,7 @@ export default function YearlyPreventiveSchedule() {
     const updated = plans.filter((plan) => plan.id !== entryId);
     setPlans(updated);
     writeScheduledPlans(updated);
+    invalidateScheduleData();
   };
 
   const approveEngineering = async (entry: PlannedPreventive) => {
@@ -571,6 +562,7 @@ export default function YearlyPreventiveSchedule() {
       );
       setPlans(updated);
       writeScheduledPlans(updated);
+      invalidateScheduleData();
     } catch (error) {
       alert(error instanceof Error ? error.message : "Engineering approval failed.");
     }
@@ -639,6 +631,7 @@ export default function YearlyPreventiveSchedule() {
       );
       setPlans(updated);
       writeScheduledPlans(updated);
+      invalidateScheduleData();
     } catch (error) {
       alert(error instanceof Error ? error.message : "Manager approval failed.");
     }
@@ -764,6 +757,35 @@ export default function YearlyPreventiveSchedule() {
     return sorted;
   }, [baseFilteredScheduledEntries, scheduledStatusFilter, scheduledSortColumn, scheduledSortDirection]);
 
+  const SCHEDULED_ENTRIES_PAGE_SIZE = 25;
+  const [currentScheduledEntriesPage, setCurrentScheduledEntriesPage] = useState(1);
+
+  // Reset to page 1 whenever the filtered/sorted entry list changes underneath the table
+  useEffect(() => {
+    setCurrentScheduledEntriesPage(1);
+  }, [
+    scheduledSubFilter,
+    scheduledMonthFilter,
+    scheduledWeekFilter,
+    scheduledTypeFilter,
+    scheduledStatusFilter,
+    showApprovedByManager,
+    scheduledSearchText,
+    scheduledSortColumn,
+    scheduledSortDirection,
+  ]);
+
+  const scheduledEntriesPageCount = Math.max(1, Math.ceil(filteredScheduledEntries.length / SCHEDULED_ENTRIES_PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentScheduledEntriesPage((page) => Math.min(page, scheduledEntriesPageCount));
+  }, [scheduledEntriesPageCount]);
+
+  const paginatedScheduledEntries = useMemo(() => {
+    const start = (currentScheduledEntriesPage - 1) * SCHEDULED_ENTRIES_PAGE_SIZE;
+    return filteredScheduledEntries.slice(start, start + SCHEDULED_ENTRIES_PAGE_SIZE);
+  }, [filteredScheduledEntries, currentScheduledEntriesPage]);
+
   // Entries locked because a manager has already approved them - excluded from bulk selection entirely
   const selectableScheduledEntries = useMemo(
     () => filteredScheduledEntries.filter((entry) => entry.status !== "Approved by Manager"),
@@ -851,6 +873,7 @@ export default function YearlyPreventiveSchedule() {
     setPlans(updatedPlans);
     writeScheduledPlans(updatedPlans);
     setSelectedEntryIds(new Set());
+    invalidateScheduleData();
   };
 
   return (
@@ -1374,7 +1397,7 @@ export default function YearlyPreventiveSchedule() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                  {filteredScheduledEntries.map((entry) => (
+                  {paginatedScheduledEntries.map((entry) => (
                     <tr key={entry.id}>
                       <td className="px-4 py-3 text-sm">
                         <input
@@ -1465,6 +1488,40 @@ export default function YearlyPreventiveSchedule() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            <div className="mt-3 flex flex-col items-center justify-between gap-2 px-1 sm:flex-row">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {filteredScheduledEntries.length === 0
+                  ? "No entries found"
+                  : `Showing ${(currentScheduledEntriesPage - 1) * SCHEDULED_ENTRIES_PAGE_SIZE + 1}-${Math.min(
+                      currentScheduledEntriesPage * SCHEDULED_ENTRIES_PAGE_SIZE,
+                      filteredScheduledEntries.length,
+                    )} of ${filteredScheduledEntries.length} entries`}
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentScheduledEntriesPage((page) => Math.max(1, page - 1))}
+                  disabled={currentScheduledEntriesPage <= 1}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-gray-600 dark:text-gray-300">
+                  Page {currentScheduledEntriesPage} of {scheduledEntriesPageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setCurrentScheduledEntriesPage((page) => Math.min(scheduledEntriesPageCount, page + 1))
+                  }
+                  disabled={currentScheduledEntriesPage >= scheduledEntriesPageCount}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </div>
         </ComponentCard>

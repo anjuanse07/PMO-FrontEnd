@@ -238,8 +238,11 @@ export async function fetchPreventiveTypes(): Promise<PreventiveTypeRecord[]> {
   return response.json();
 }
 
-export async function fetchSchedules(): Promise<ScheduleRecord[]> {
-  const response = await fetch(`${API_BASE}/api/schedules`);
+export async function fetchSchedules(year?: number): Promise<ScheduleRecord[]> {
+  const params = new URLSearchParams();
+  if (year) params.set("year", String(year));
+  const query = params.toString();
+  const response = await fetch(`${API_BASE}/api/schedules${query ? `?${query}` : ""}`);
   if (!response.ok) {
     throw new Error("Failed to fetch schedules");
   }
@@ -304,8 +307,11 @@ export async function updateScheduleStatus(
   return response.json();
 }
 
-export async function fetchApprovedOrders(): Promise<ApprovedOrderRecord[]> {
-  const response = await fetch(`${API_BASE}/api/approved-orders`);
+export async function fetchApprovedOrders(year?: number): Promise<ApprovedOrderRecord[]> {
+  const params = new URLSearchParams();
+  if (year) params.set("year", String(year));
+  const query = params.toString();
+  const response = await fetch(`${API_BASE}/api/approved-orders${query ? `?${query}` : ""}`);
   if (!response.ok) {
     throw new Error("Failed to fetch approved orders");
   }

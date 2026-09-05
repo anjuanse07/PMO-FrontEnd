@@ -64,7 +64,36 @@ function describeAuditEvent(entry: AuditLogRecord, machinesByNo: Map<number, Mac
       return `Imported ${Number(meta.inserted) || 0} history log record(s)${meta.skipped ? `, skipped ${meta.skipped}` : ""}`;
     case "MACHINE_PARAMETER_CREATED": return `Added a parameter to machine ${machineLabel(meta.machineNo ?? entry.entity_id, machinesByNo)}`;
     case "MACHINE_PARAMETERS_IMPORTED": return `Imported ${Number(meta.inserted) || 0} machine parameter(s)`;
-    case "MACHINE_PARAMETER_UPDATED": return `Updated parameter fields: ${list(meta.fields) || "-"}`;
+    case "MACHINE_PARAMETER_UPDATED": {
+      const changes = (meta.changes && typeof meta.changes === "object" ? meta.changes : {}) as Record<
+        string,
+        { from?: string; to?: string } | undefined
+      >;
+      const changeKeys = Object.keys(changes);
+      // Rows logged before this description was added only recorded which
+      // field names changed, not the values or which machine/item - fall
+      // back to that for old rows instead of showing a useless "for #-".
+      if (!changeKeys.length && Array.isArray(meta.fields)) {
+        return `Updated parameter fields: ${list(meta.fields) || "-"}`;
+      }
+      const label = machineLabel(meta.machineNo, machinesByNo);
+      const itemName = (meta.partChecklist as string) || (meta.partMaster as string) || "a checklist item";
+      const fieldLabels: Record<string, string> = {
+        part_master: "Part Master",
+        part_checklist: "Checklist",
+        action: "Action",
+        standard: "Standard",
+      };
+      const changeParts = changeKeys.map((field) => {
+        const change = changes[field];
+        const from = change?.from ? `"${change.from}"` : "(empty)";
+        const to = change?.to ? `"${change.to}"` : "(empty)";
+        return `${fieldLabels[field] || field}: ${from} -> ${to}`;
+      });
+      return changeParts.length
+        ? `Updated checklist item "${itemName}" for ${label} - ${changeParts.join("; ")}`
+        : `Updated checklist item "${itemName}" for ${label}`;
+    }
     case "MACHINE_PARAMETER_DELETED": return "Deleted a machine parameter";
     case "SCHEDULE_PLAN_CREATED": {
       const month = typeof meta.month === "number" ? MONTH_NAMES[meta.month] : "-";
