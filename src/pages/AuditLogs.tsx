@@ -4,7 +4,7 @@ import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import PageMeta from "../components/common/PageMeta";
 import Button from "../components/ui/button/Button";
 import Badge from "../components/ui/badge/Badge";
-import { exportAuditLogs, exportAuditLogsPdf, fetchAuditLogs, type AuditLogRecord } from "../services/pmoApi";
+import { exportAuditLogs, exportAuditLogsPdf, fetchAuditLogs, fetchMachines, type AuditLogRecord, type MachineRecord } from "../services/pmoApi";
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -30,10 +30,28 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+function machineLabel(machineNo: unknown, machinesByNo: Map<number, MachineRecord>): string {
+  const no = machineNo != null ? Number(machineNo) : null;
+  const machine = no != null ? machinesByNo.get(no) : null;
+  if (machine) return `${machine.nama_mesin} (${machine.kode_mesin})`;
+  return no != null ? `#${no}` : "#-";
+}
+
 // Turns an event_type + its metadata JSON into the same kind of human-readable
 // sentence server.js builds for the CSV export, so the table and CSV always match.
-function describeAuditEvent(entry: AuditLogRecord): string {
-  const meta = (entry.metadata && typeof entry.metadata === "object" ? entry.metadata : {}) as Record<string, unknown>;
+function describeAuditEvent(entry: AuditLogRecord, machinesByNo: Map<number, MachineRecord> = new Map()): string {
+  // metadata is stored via JSON.stringify() into a LONGTEXT column (MariaDB's
+  // "JSON" type has no true JSON wire type), so it always arrives here as a
+  // plain string, never a pre-parsed object - it must be parsed back.
+  let parsedMeta: unknown = entry.metadata;
+  if (typeof parsedMeta === "string") {
+    try {
+      parsedMeta = JSON.parse(parsedMeta);
+    } catch {
+      parsedMeta = {};
+    }
+  }
+  const meta = (parsedMeta && typeof parsedMeta === "object" ? parsedMeta : {}) as Record<string, unknown>;
   const list = (value: unknown) => (Array.isArray(value) && value.length ? value.join(", ") : null);
 
   switch (entry.event_type) {
@@ -44,18 +62,18 @@ function describeAuditEvent(entry: AuditLogRecord): string {
     case "HISTORY_LOG_EXPORT": return "Exported the history log (CSV)";
     case "HISTORY_LOG_IMPORTED":
       return `Imported ${Number(meta.inserted) || 0} history log record(s)${meta.skipped ? `, skipped ${meta.skipped}` : ""}`;
-    case "MACHINE_PARAMETER_CREATED": return `Added a parameter to machine #${meta.machineNo ?? entry.entity_id ?? "-"}`;
+    case "MACHINE_PARAMETER_CREATED": return `Added a parameter to machine ${machineLabel(meta.machineNo ?? entry.entity_id, machinesByNo)}`;
     case "MACHINE_PARAMETERS_IMPORTED": return `Imported ${Number(meta.inserted) || 0} machine parameter(s)`;
     case "MACHINE_PARAMETER_UPDATED": return `Updated parameter fields: ${list(meta.fields) || "-"}`;
     case "MACHINE_PARAMETER_DELETED": return "Deleted a machine parameter";
     case "SCHEDULE_PLAN_CREATED": {
       const month = typeof meta.month === "number" ? MONTH_NAMES[meta.month] : "-";
-      return `Scheduled machine #${meta.machineNo ?? "-"} for ${month} ${meta.year ?? ""} (week ${meta.week ?? "-"})`;
+      return `Scheduled ${machineLabel(meta.machineNo, machinesByNo)} for ${month} ${meta.year ?? ""} (week ${meta.week ?? "-"})`;
     }
     case "SCHEDULE_PLAN_DELETED": return "Deleted a schedule plan";
     case "SCHEDULE_APPROVED_ENGINEERING": return "Approved a schedule (Engineering stage)";
     case "SCHEDULE_APPROVED_MANAGER": return "Approved a schedule (Manager stage)";
-    case "MAINTENANCE_ORDER_CREATED": return `Created a preventive order for machine #${meta.machineNo ?? "-"} (status: ${meta.status ?? "-"})`;
+    case "MAINTENANCE_ORDER_CREATED": return `Created a preventive order for ${machineLabel(meta.machineNo, machinesByNo)} (status: ${meta.status ?? "-"})`;
     case "MAINTENANCE_ORDER_UPDATED": return `Updated order fields: ${list(meta.fields) || "-"}`;
     case "ORDER_CHECKLIST_SAVED": return `Saved checklist (${meta.itemsUpdated ?? 0} item(s) updated)`;
     case "USER_PROFILE_UPDATED": return `Updated profile fields: ${list(meta.fields) || "-"}`;
@@ -99,6 +117,13 @@ export default function AuditLogs() {
   // Audit Logs is restricted to manager and engineering supervisor accounts.
   const canViewAuditLogs = canViewLogs(currentUser);
   const [logs, setLogs] = useState<AuditLogRecord[]>([]);
+  const [machinesByNo, setMachinesByNo] = useState<Map<number, MachineRecord>>(new Map());
+
+  useEffect(() => {
+    fetchMachines()
+      .then((rows) => setMachinesByNo(new Map(rows.map((m) => [m.no, m]))))
+      .catch((err) => console.error("Failed to load machines:", err));
+  }, []);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
@@ -190,7 +215,7 @@ export default function AuditLogs() {
           <td>${escapeHtml(entry.entity_type)}</td>
           <td>${escapeHtml(accountName(entry))}</td>
           <td>${escapeHtml(roleLabel(entry.user_role))}</td>
-          <td>${escapeHtml(describeAuditEvent(entry))}</td>
+          <td>${escapeHtml(describeAuditEvent(entry, machinesByNo))}</td>
           <td>${escapeHtml(entry.ip_address)}</td>
         </tr>`;
       }).join("");
@@ -341,7 +366,7 @@ export default function AuditLogs() {
                         </td>
                         <td className="whitespace-nowrap px-5 py-4">{roleLabel(entry.user_role)}</td>
                         <td className="max-w-96 px-5 py-4">
-                          <p className="break-words">{describeAuditEvent(entry)}</p>
+                          <p className="break-words">{describeAuditEvent(entry, machinesByNo)}</p>
                         </td>
                         <td className="whitespace-nowrap px-5 py-4">{entry.ip_address || "-"}</td>
                       </tr>
