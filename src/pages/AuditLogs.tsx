@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentUser, canViewLogs } from "../auth/auth";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
-import PageMeta from "../components/common/PageMeta";
+// import PageMeta from "../components/common/PageMeta";
 import Button from "../components/ui/button/Button";
 import Badge from "../components/ui/badge/Badge";
 import { exportAuditLogs, exportAuditLogsPdf, fetchAuditLogs, fetchMachines, type AuditLogRecord, type MachineRecord } from "../services/pmoApi";
@@ -274,7 +274,7 @@ export default function AuditLogs() {
 
   return (
     <>
-      <PageMeta title="Audit Logs | PMO" description="PMO application audit trail" />
+      {/* <PageMeta title="Audit Logs | PMO" description="PMO application audit trail" /> */}
       <PageBreadcrumb pageTitle="Audit Logs" />
 
       {!canViewAuditLogs ? (

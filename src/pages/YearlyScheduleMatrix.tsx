@@ -4,14 +4,11 @@ import ComponentCard from "../components/common/ComponentCard";
 import PageMeta from "../components/common/PageMeta";
 import YearlyProgressDashboard from "../components/ecommerce/YearlyProgressDashboard";
 import { type MachineSub } from "../data/preventiveMaintenanceData";
+import { useSchedules, useApprovedOrders } from "../hooks/useScheduleData";
 import {
   fetchMachines,
-  fetchSchedules,
-  fetchApprovedOrders,
   fetchPreventiveTypes,
   type MachineRecord,
-  type ScheduleRecord,
-  type ApprovedOrderRecord,
   type PreventiveTypeRecord,
 } from "../services/pmoApi";
 
@@ -71,6 +68,7 @@ type MachineRow = {
   assetNumber: string;
   machineName: string;
   location: string | null;
+  subChild: string | null;
 };
 
 const splitTypes = (raw: string | null | undefined): string[] =>
@@ -88,37 +86,35 @@ export default function YearlyScheduleMatrix() {
   // months at once instead of only ever one month or all twelve.
   const [selectedMonths, setSelectedMonths] = useState<number[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>("UTY");
+  const [childSubFilter, setChildSubFilter] = useState<string>("All");
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
-  const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
-  const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
   const [preventiveTypes, setPreventiveTypes] = useState<PreventiveTypeRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMachines, setIsLoadingMachines] = useState(true);
   const [searchText, setSearchText] = useState("");
   const MATRIX_ROWS_PAGE_SIZE = 20;
   const [currentMatrixPage, setCurrentMatrixPage] = useState(1);
 
+  // Unscoped ("All" years) - yearOptions below needs to see every year that
+  // has ever had schedule/order data, not just the currently selected one.
+  const { schedules, isLoadingSchedules } = useSchedules("All");
+  const { orders, isLoadingOrders } = useApprovedOrders("All");
+  const isLoading = isLoadingMachines || isLoadingSchedules || isLoadingOrders;
+
   useEffect(() => {
-    const loadAll = async () => {
+    const loadMachinesAndTypes = async () => {
       try {
-        setIsLoading(true);
-        const [machines, scheduleRows, orderRows, typeRows] = await Promise.all([
-          fetchMachines(),
-          fetchSchedules(),
-          fetchApprovedOrders(),
-          fetchPreventiveTypes(),
-        ]);
+        setIsLoadingMachines(true);
+        const [machines, typeRows] = await Promise.all([fetchMachines(), fetchPreventiveTypes()]);
         setMachineRecords(machines);
-        setSchedules(scheduleRows);
-        setOrders(orderRows);
         setPreventiveTypes(typeRows);
       } catch (error) {
         console.error("Failed to load yearly schedule matrix data:", error);
       } finally {
-        setIsLoading(false);
+        setIsLoadingMachines(false);
       }
     };
 
-    void loadAll();
+    void loadMachinesAndTypes();
   }, []);
 
   // Year filter reflects whatever years actually have schedule or order data,
@@ -163,6 +159,7 @@ export default function YearlyScheduleMatrix() {
         assetNumber: machine.kode_mesin,
         machineName: machine.nama_mesin,
         location: machine.lokasi,
+        subChild: machine.sub_child,
       });
     }
 
@@ -302,9 +299,28 @@ export default function YearlyScheduleMatrix() {
     return map;
   }, [schedules, orders, selectedYear, splitTypesAsAbbreviations]);
 
-  const currentMachines = useMemo(() => {
+  // Distinct child subs (e.g. "MTC 1", "MTC 2") present under the active
+  // main sub tab. Empty/single-value means no real split (e.g. BLD), so the
+  // filter row is hidden entirely in that case.
+  const childSubOptions = useMemo(() => {
     if (activeTab === "Dashboard") return [];
     const list = machinesBySub.get(activeTab) ?? [];
+    const distinct = new Set(list.map((m) => m.subChild).filter((v): v is string => Boolean(v)));
+    return Array.from(distinct).sort();
+  }, [machinesBySub, activeTab]);
+
+  // Reset the child-sub filter whenever the main tab changes, since a
+  // child sub from one main sub is meaningless under a different one.
+  useEffect(() => {
+    setChildSubFilter("All");
+  }, [activeTab]);
+
+  const currentMachines = useMemo(() => {
+    if (activeTab === "Dashboard") return [];
+    let list = machinesBySub.get(activeTab) ?? [];
+    if (childSubFilter !== "All") {
+      list = list.filter((m) => (m.subChild || "") === childSubFilter);
+    }
     if (!searchText.trim()) return list;
     const q = searchText.toLowerCase();
     return list.filter(
@@ -313,12 +329,12 @@ export default function YearlyScheduleMatrix() {
         m.assetNumber.toLowerCase().includes(q) ||
         (m.location?.toLowerCase().includes(q) ?? false),
     );
-  }, [machinesBySub, activeTab, searchText]);
+  }, [machinesBySub, activeTab, childSubFilter, searchText]);
 
   // Reset to page 1 whenever the filtered row set changes underneath the table
   useEffect(() => {
     setCurrentMatrixPage(1);
-  }, [activeTab, selectedYear, selectedMonths, searchText]);
+  }, [activeTab, childSubFilter, selectedYear, selectedMonths, searchText]);
 
   const matrixPageCount = Math.max(1, Math.ceil(currentMachines.length / MATRIX_ROWS_PAGE_SIZE));
 
@@ -633,7 +649,7 @@ export default function YearlyScheduleMatrix() {
   return (
     <>
       <PageMeta
-        title="Yearly Schedule Matrix"
+        // title="Yearly Schedule Matrix"
         description="Yearly preventive schedule matrix and completion dashboard by machine group"
       />
       <PageBreadcrumb pageTitle="Yearly Schedule Matrix" />
@@ -731,6 +747,26 @@ export default function YearlyScheduleMatrix() {
             </button> */}
           </div>
 
+          {activeTab !== "Dashboard" && childSubOptions.length > 1 && (
+            <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3 dark:border-white/[0.05]">
+              <label className="text-sm text-gray-700 dark:text-gray-300">
+                Child Sub
+                <select
+                  value={childSubFilter}
+                  onChange={(e) => setChildSubFilter(e.target.value)}
+                  className="ml-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                >
+                  <option value="All">All {activeTab} Child Subs</option>
+                  {childSubOptions.map((child) => (
+                    <option key={child} value={child}>
+                      {child}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          )}
+
           {activeTab !== "Dashboard" && (
             <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-gray-600 dark:text-gray-300">
               <span className="flex items-center gap-1.5">
@@ -749,7 +785,7 @@ export default function YearlyScheduleMatrix() {
 
         {activeTab !== "Dashboard" ? (
           <ComponentCard
-            title={`${activeTab} - Matrix (${
+            title={`${activeTab}${childSubFilter !== "All" ? ` (${childSubFilter})` : ""} - Matrix (${
               selectedMonths.length === 0
                 ? "Full Year"
                 : monthsToShow.map((m) => monthAbbrev[m]).join(", ")

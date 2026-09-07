@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
 import ComponentCard from "../common/ComponentCard";
+import MonthlyCompletionBreakdown from "./MonthlyCompletionBreakdown";
 import Badge from "../ui/badge/Badge";
 import { type MachineSub } from "../../data/preventiveMaintenanceData";
+import { useSchedules, useApprovedOrders } from "../../hooks/useScheduleData";
 import {
   fetchMachines,
-  fetchSchedules,
-  fetchApprovedOrders,
   type MachineRecord,
   type ScheduleRecord,
   type ApprovedOrderRecord,
@@ -95,9 +95,13 @@ export default function YearlyProgressDashboard({
   const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
   const [selectedMonth, setSelectedMonth] = useState<number | "All">("All");
   const [machineRecords, setMachineRecords] = useState<MachineRecord[]>([]);
-  const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
-  const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(!isControlled);
+  const [isLoadingMachines, setIsLoadingMachines] = useState(!isControlled);
+  // Unscoped ("All" years) - yearOptions further down needs to see every
+  // year that has ever had schedule/order data, not just one specific year.
+  // Only used in standalone mode; in controlled mode the props below win
+  // via the effective* ternaries regardless of what this returns.
+  const { schedules: fetchedSchedules, isLoadingSchedules } = useSchedules("All");
+  const { orders: fetchedOrders, isLoadingOrders } = useApprovedOrders("All");
 
   useEffect(() => {
     if (year !== undefined) setSelectedYear(year);
@@ -110,31 +114,27 @@ export default function YearlyProgressDashboard({
   useEffect(() => {
     if (isControlled) return;
 
-    const loadAll = async () => {
+    const loadMachines = async () => {
       try {
-        setIsLoading(true);
-        const [machinesData, scheduleRows, orderRows] = await Promise.all([
-          fetchMachines(),
-          fetchSchedules(),
-          fetchApprovedOrders(),
-        ]);
+        setIsLoadingMachines(true);
+        const machinesData = await fetchMachines();
         setMachineRecords(machinesData);
-        setSchedules(scheduleRows);
-        setOrders(orderRows);
       } catch (error) {
         console.error("Failed to load yearly progress dashboard data:", error);
       } finally {
-        setIsLoading(false);
+        setIsLoadingMachines(false);
       }
     };
 
-    void loadAll();
+    void loadMachines();
   }, [isControlled]);
 
   const effectiveMachines = isControlled ? machinesProp! : machineRecords;
-  const effectiveSchedules = isControlled ? schedulesProp! : schedules;
-  const effectiveOrders = isControlled ? ordersProp! : orders;
-  const effectiveLoading = isControlled ? Boolean(isLoadingProp) : isLoading;
+  const effectiveSchedules = isControlled ? schedulesProp! : fetchedSchedules;
+  const effectiveOrders = isControlled ? ordersProp! : fetchedOrders;
+  const effectiveLoading = isControlled
+    ? Boolean(isLoadingProp)
+    : isLoadingMachines || isLoadingSchedules || isLoadingOrders;
 
   // Year filter reflects whatever years actually have schedule or order data,
   // plus the current year and the selected year, so the dropdown is never
@@ -158,6 +158,32 @@ export default function YearlyProgressDashboard({
     return map;
   }, [effectiveMachines]);
 
+  // machine_no -> child sub (e.g. "MTC 1"), falling back to the main sub
+  // label itself when sub_child hasn't been backfilled yet.
+  const childSubByMachineId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const machine of effectiveMachines) {
+      map.set(String(machine.no), machine.sub_child || machine.kategori);
+    }
+    return map;
+  }, [effectiveMachines]);
+
+  // Which child subs actually exist under each main sub - BLD (no real
+  // split) never shows a breakdown, MTC/UTY only list child subs in use.
+  const childSubsByMainSub = useMemo(() => {
+    const seen: Record<MachineSub, Set<string>> = { BLD: new Set(), UTY: new Set(), MTC: new Set() };
+    for (const machine of effectiveMachines) {
+      const main = machine.kategori as MachineSub;
+      if (!seen[main]) continue;
+      seen[main].add(machine.sub_child || machine.kategori);
+    }
+    const result: Record<MachineSub, string[]> = { BLD: [], UTY: [], MTC: [] };
+    for (const key of Object.keys(seen) as MachineSub[]) {
+      result[key] = Array.from(seen[key]).sort();
+    }
+    return result;
+  }, [effectiveMachines]);
+
   const dashboardStats = useMemo(() => {
     const perSub: Record<MachineSub, { scheduled: number; completed: number }> = {
       BLD: { scheduled: 0, completed: 0 },
@@ -171,28 +197,47 @@ export default function YearlyProgressDashboard({
       MTC: monthAbbrev.map(() => ({ scheduled: 0, completed: 0 })),
     };
 
+    // Keyed directly by child sub label (e.g. "MTC 1"), for the per-card breakdown.
+    const perChildSub: Record<string, { scheduled: number; completed: number }> = {};
+    const perChildSubMonth: Record<string, { scheduled: number; completed: number }[]> = {};
+    const ensureChild = (key: string) => {
+      if (!perChildSub[key]) perChildSub[key] = { scheduled: 0, completed: 0 };
+      if (!perChildSubMonth[key]) perChildSubMonth[key] = monthAbbrev.map(() => ({ scheduled: 0, completed: 0 }));
+    };
+
     for (const sched of effectiveSchedules) {
       if (sched.tahun !== selectedYear) continue;
       const sub = sched.sub ?? subByMachineId.get(String(sched.machine_no));
-      if (!sub || !perSub[sub]) continue;
-      perSub[sub].scheduled += 1;
-      if (sched.bulan >= 0 && sched.bulan < 12) {
-        perSubMonth[sub][sched.bulan].scheduled += 1;
+      if (sub && perSub[sub]) {
+        perSub[sub].scheduled += 1;
+        if (sched.bulan >= 0 && sched.bulan < 12) perSubMonth[sub][sched.bulan].scheduled += 1;
+      }
+      const childSub = childSubByMachineId.get(String(sched.machine_no));
+      if (childSub) {
+        ensureChild(childSub);
+        perChildSub[childSub].scheduled += 1;
+        if (sched.bulan >= 0 && sched.bulan < 12) perChildSubMonth[childSub][sched.bulan].scheduled += 1;
       }
     }
 
     for (const order of effectiveOrders) {
       if (order.year !== selectedYear || order.status !== "Completed") continue;
       const sub = order.sub ?? subByMachineId.get(String(order.machine_no));
-      if (!sub || !perSub[sub]) continue;
-      perSub[sub].completed += 1;
-      if (order.month >= 0 && order.month < 12) {
-        perSubMonth[sub][order.month].completed += 1;
+      if (sub && perSub[sub]) {
+        perSub[sub].completed += 1;
+        if (order.month >= 0 && order.month < 12) perSubMonth[sub][order.month].completed += 1;
+      }
+      const childSub = childSubByMachineId.get(String(order.machine_no));
+      if (childSub) {
+        ensureChild(childSub);
+        perChildSub[childSub].completed += 1;
+        if (order.month >= 0 && order.month < 12) perChildSubMonth[childSub][order.month].completed += 1;
       }
     }
 
-    return { perSub, perSubMonth };
-  }, [effectiveSchedules, effectiveOrders, subByMachineId, selectedYear]);
+    return { perSub, perSubMonth, perChildSub, perChildSubMonth };
+  }, [effectiveSchedules, effectiveOrders, subByMachineId, childSubByMachineId, selectedYear]);
+
 
   const overallStats = useMemo(() => {
     if (selectedMonth === "All") {
@@ -217,24 +262,6 @@ export default function YearlyProgressDashboard({
       { scheduled: 0, completed: 0 },
     );
   }, [dashboardStats, selectedMonth]);
-
-  // Per-month totals across BLD + UTY + MTC, for the breakdown table's "Total" row
-  const totalsByMonth = useMemo(
-    () =>
-      monthAbbrev.map((_, idx) =>
-        subTabs.reduce(
-          (acc, tab) => {
-            const cell = dashboardStats.perSubMonth[tab.key][idx];
-            return {
-              scheduled: acc.scheduled + cell.scheduled,
-              completed: acc.completed + cell.completed,
-            };
-          },
-          { scheduled: 0, completed: 0 },
-        ),
-      ),
-    [dashboardStats],
-  );
 
   const pct = (completed: number, scheduled: number) =>
     scheduled === 0 ? 0 : Math.min(100, Math.round((completed / scheduled) * 100));
@@ -311,6 +338,8 @@ export default function YearlyProgressDashboard({
           const stat =
             selectedMonth === "All" ? dashboardStats.perSub[tab.key] : dashboardStats.perSubMonth[tab.key][selectedMonth];
           const percent = pct(stat.completed, stat.scheduled);
+          const childSubs = childSubsByMainSub[tab.key] ?? [];
+          const showChildBreakdown = childSubs.length > 1;
           return (
             <ComponentCard key={tab.key} title={`${tab.label} Group`}>
               <p className="mb-2 text-xs text-gray-400 dark:text-gray-500">
@@ -332,6 +361,36 @@ export default function YearlyProgressDashboard({
                   style={{ width: `${percent}%` }}
                 />
               </div>
+
+              {showChildBreakdown && (
+                <div className="mt-3 space-y-2 border-t border-gray-100 pt-3 dark:border-white/[0.05]">
+                  {childSubs.map((childSub) => {
+                    const childStat =
+                      selectedMonth === "All"
+                        ? dashboardStats.perChildSub[childSub] ?? { scheduled: 0, completed: 0 }
+                        : dashboardStats.perChildSubMonth[childSub]?.[selectedMonth] ?? { scheduled: 0, completed: 0 };
+                    const childPercent = pct(childStat.completed, childStat.scheduled);
+                    return (
+                      <div key={childSub}>
+                        <div className="mb-1 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                          <span>{childSub}</span>
+                          <span>
+                            {childStat.completed}/{childStat.scheduled} ({childPercent}%)
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                          <div
+                            className={`h-full rounded-full ${
+                              childPercent >= 80 ? "bg-green-400" : childPercent >= 50 ? "bg-brand-400" : "bg-yellow-300"
+                            }`}
+                            style={{ width: `${childPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </ComponentCard>
           );
         })}
@@ -339,76 +398,14 @@ export default function YearlyProgressDashboard({
       )}
 
       {showBreakdown && (
-      <ComponentCard title="Monthly Completion Breakdown">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-xs">
-            <thead className="bg-gray-50 dark:bg-gray-800/60">
-              <tr>
-                <th className="px-3 py-2 font-semibold uppercase text-gray-600 dark:text-gray-300">Group</th>
-                {monthAbbrev.map((month) => (
-                  <th key={month} className="px-3 py-2 text-center font-semibold uppercase text-gray-600 dark:text-gray-300">
-                    {month}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-              {subTabs.map((tab) => (
-                <tr key={tab.key}>
-                  <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{tab.label}</td>
-                  {dashboardStats.perSubMonth[tab.key].map((cell, idx) => {
-                    const percent = pct(cell.completed, cell.scheduled);
-                    return (
-                      <td key={idx} className="px-3 py-2 text-center text-gray-600 dark:text-gray-300">
-                        {cell.scheduled === 0 ? (
-                          <span className="text-gray-300 dark:text-gray-600">-</span>
-                        ) : (
-                          <span
-                            className={
-                              percent >= 80
-                                ? "text-green-600 dark:text-green-400"
-                                : percent >= 50
-                                  ? "text-brand-600 dark:text-brand-400"
-                                  : "text-yellow-600 dark:text-yellow-400"
-                            }
-                          >
-                            {cell.completed}/{cell.scheduled}
-                          </span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              <tr className="border-t border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-800/40">
-                <td className="px-3 py-2 font-semibold text-gray-800 dark:text-white">Total</td>
-                {totalsByMonth.map((cell, idx) => {
-                  const percent = pct(cell.completed, cell.scheduled);
-                  return (
-                    <td key={idx} className="px-3 py-2 text-center font-semibold text-gray-800 dark:text-white">
-                      {cell.scheduled === 0 ? (
-                        <span className="text-gray-300 dark:text-gray-600">-</span>
-                      ) : (
-                        <span
-                          className={
-                            percent >= 80
-                              ? "text-green-700 dark:text-green-300"
-                              : percent >= 50
-                                ? "text-brand-700 dark:text-brand-300"
-                                : "text-yellow-700 dark:text-yellow-300"
-                          }
-                        >
-                          {cell.completed}/{cell.scheduled}
-                        </span>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </ComponentCard>
+        <MonthlyCompletionBreakdown
+          machines={effectiveMachines}
+          schedules={effectiveSchedules}
+          orders={effectiveOrders}
+          isLoading={effectiveLoading}
+          year={selectedYear}
+          showYearSelector={false}
+        />
       )}
     </Wrapper>
   );
