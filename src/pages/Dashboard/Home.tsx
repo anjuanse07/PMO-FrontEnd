@@ -65,7 +65,7 @@ export default function Home() {
   return (
     <>
       <PageMeta
-        title="Preventive Maintenance Online"
+        // title="Preventive Maintenance Online"
         description="This is Sean Julius Lase's Model"
       />
       <div className="grid grid-cols-12 gap-4 md:gap-6">

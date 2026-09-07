@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState, Fragment } from "react";
 import { useNavigate } from "react-router";
 import { Modal } from "../ui/modal";
 import Badge from "../ui/badge/Badge";
+import { useApprovedOrders } from "../../hooks/useScheduleData";
 import {
-  fetchApprovedOrders,
   fetchTechnicians,
-  type ApprovedOrderRecord,
   type TechnicianRecord,
+  type ApprovedOrderRecord,
 } from "../../services/pmoApi";
 
 // Which technicians-table column to group by, matching the real schema hierarchy:
@@ -29,6 +29,7 @@ type TechnicianStat = {
 
 type RoleMember = {
   technicianName: string;
+  initial: string;
   detailRole: string;
   planned: number;
   completed: number;
@@ -47,6 +48,7 @@ type RoleSummary = {
 
 type RankedTechnician = {
   technicianName: string;
+  initial: string;
   detailRole: string;
   hours: number;
   days: number;
@@ -87,8 +89,9 @@ function toLocalDateValue(value: string | null | undefined): string | null {
   return `${year}-${month}-${day}`;
 }
 
-// "Maulana Aldi Firmansyah" -> "MAF", "Nuryanto" -> "NUR"
-function getInitials(name: string): string {
+// Fallback only - used when a technician doesn't have a real `inisial` set
+// in the database yet. "Maulana Aldi Firmansyah" -> "MAF", "Nuryanto" -> "NUR"
+function autoGenerateInitials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length >= 2) {
     return words
@@ -98,6 +101,13 @@ function getInitials(name: string): string {
       .toUpperCase();
   }
   return name.slice(0, 3).toUpperCase();
+}
+
+// Prefers the real, manually-assigned initial stored in the database
+// (technicians.inisial); only falls back to auto-generating one from the
+// name for technicians that haven't been backfilled with a real initial yet.
+function resolveInitial(technician: TechnicianRecord): string {
+  return technician.inisial?.trim() || autoGenerateInitials(technician.technician_name);
 }
 
 const rankBadgeStyle = (rank: number) => {
@@ -130,9 +140,12 @@ export default function TechnicianWorkloadTable({
   showYearSelector = true,
 }: TechnicianWorkloadTableProps) {
   const navigate = useNavigate();
-  const [orders, setOrders] = useState<ApprovedOrderRecord[]>([]);
+  // Unscoped ("All" years) - yearOptions below needs to see every year that
+  // has ever had order data, not just the currently selected one.
+  const { orders, isLoadingOrders: isLoadingOrdersData } = useApprovedOrders("All");
   const [technicianRoster, setTechnicianRoster] = useState<TechnicianRecord[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingTechnicians, setIsLoadingTechnicians] = useState(true);
+  const isLoading = isLoadingOrdersData || isLoadingTechnicians;
   const [viewMode, setViewMode] = useState<"role" | "ranking">("role");
   const [groupBy, setGroupBy] = useState<GroupByField>("technician_main_sub");
   const [selectedYear, setSelectedYear] = useState(year ?? new Date().getFullYear());
@@ -144,20 +157,19 @@ export default function TechnicianWorkloadTable({
   }, [year]);
 
   useEffect(() => {
-    const loadData = async () => {
+    const loadTechnicians = async () => {
       try {
-        setIsLoading(true);
-        const [orderRows, technicianRows] = await Promise.all([fetchApprovedOrders(), fetchTechnicians()]);
-        setOrders(orderRows);
+        setIsLoadingTechnicians(true);
+        const technicianRows = await fetchTechnicians();
         setTechnicianRoster(technicianRows);
       } catch (error) {
         console.error("Failed to load technician workload data:", error);
       } finally {
-        setIsLoading(false);
+        setIsLoadingTechnicians(false);
       }
     };
 
-    void loadData();
+    void loadTechnicians();
   }, []);
 
   // Year filter reflects whatever years actually have order data, plus the current year
@@ -215,6 +227,7 @@ export default function TechnicianWorkloadTable({
       const list = groups.get(key) ?? [];
       list.push({
         technicianName: t.technician_name,
+        initial: resolveInitial(t),
         detailRole: t.detail_technician_role,
         planned: stat.planned,
         completed: stat.completed,
@@ -251,6 +264,7 @@ export default function TechnicianWorkloadTable({
         const stat = technicianStats.get(t.technician_name) ?? { planned: 0, completed: 0, hours: 0, days: new Set() };
         return {
           technicianName: t.technician_name,
+          initial: resolveInitial(t),
           detailRole: t.detail_technician_role,
           hours: Math.round(stat.hours * 100) / 100,
           days: stat.days.size,
@@ -433,7 +447,7 @@ export default function TechnicianWorkloadTable({
                                   className="cursor-pointer hover:bg-gray-50 dark:hover:bg-white/[0.03]"
                                 >
                                   <td className="px-3 py-2 pl-10 font-mono text-xs font-semibold text-brand-600 dark:text-brand-400">
-                                    {getInitials(member.technicianName)}
+                                    {member.initial}
                                   </td>
                                   <td className="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">
                                     {member.technicianName}
@@ -491,7 +505,7 @@ export default function TechnicianWorkloadTable({
                   {rank}
                 </span>
                 <div className="w-48 shrink-0">
-                  <p className="text-sm font-semibold text-gray-800 dark:text-white/90">{getInitials(tech.technicianName)}</p>
+                  <p className="text-sm font-semibold text-gray-800 dark:text-white/90">{tech.initial}</p>
                   <p className="truncate text-xs font-medium text-gray-700 dark:text-gray-300">{tech.technicianName}</p>
                   <p className="truncate text-[11px] text-gray-300 dark:text-gray-600">{tech.detailRole}</p>
                 </div>

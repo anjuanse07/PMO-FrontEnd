@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { getCurrentUser, canViewLogs } from "../auth/auth";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
-import PageMeta from "../components/common/PageMeta";
+// import PageMeta from "../components/common/PageMeta";
 import Button from "../components/ui/button/Button";
 import { Modal } from "../components/ui/modal";
 import Badge from "../components/ui/badge/Badge";
@@ -18,6 +18,7 @@ import {
   type HistoryLogImportItem,
   type TechnicianRecord,
 } from "../services/pmoApi";
+import { escapeCsvValue, parseCsvLine } from "../utils/exportHelpers";
 
 // -------------------------------------------------------------------------
 // Local helpers
@@ -43,39 +44,6 @@ function statusBadgeColor(status: HistoryLogRecord["status"]): "warning" | "prim
   if (status === "Approval") return "primary";
   return "success";
 }
-
-const toCsvValue = (value: unknown) => {
-  const text = String(value ?? "");
-  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-};
-
-const parseCsvLine = (line: string): string[] => {
-  const result: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const char = line[i];
-    if (inQuotes) {
-      if (char === '"' && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else if (char === '"') {
-        inQuotes = false;
-      } else {
-        current += char;
-      }
-    } else if (char === '"') {
-      inQuotes = true;
-    } else if (char === ",") {
-      result.push(current);
-      current = "";
-    } else {
-      current += char;
-    }
-  }
-  result.push(current);
-  return result.map((value) => value.trim());
-};
 
 type MachineGroup = {
   machineNo: number;
@@ -362,7 +330,7 @@ export default function HistoryLogs() {
 
   const handleDownloadTemplate = () => {
     const header = ["Asset_Code", "Machine_Name", "Preventive_Type", "Execution_Date", "Technician_Name", "Status"];
-    const lines = machines.map((m) => [m.kode_mesin, m.nama_mesin, "", "", "", ""].map(toCsvValue).join(","));
+    const lines = machines.map((m) => [m.kode_mesin, m.nama_mesin, "", "", "", ""].map(escapeCsvValue).join(","));
     const csv = [header.join(","), ...lines].join("\r\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -418,7 +386,7 @@ export default function HistoryLogs() {
 
   return (
     <>
-      <PageMeta title="History Log | PMO" description="Preventive maintenance history per machine" />
+      {/* <PageMeta title="History Log | PMO" description="Preventive maintenance history per machine" /> */}
       <PageBreadcrumb pageTitle="History Log" />
 
       {!canViewHistoryLogs ? (

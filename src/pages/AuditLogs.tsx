@@ -5,6 +5,7 @@ import PageBreadcrumb from "../components/common/PageBreadCrumb";
 import Button from "../components/ui/button/Button";
 import Badge from "../components/ui/badge/Badge";
 import { exportAuditLogs, exportAuditLogsPdf, fetchAuditLogs, fetchMachines, type AuditLogRecord, type MachineRecord } from "../services/pmoApi";
+import { escapeHtmlValue, writeAndPrintHtml } from "../utils/exportHelpers";
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -130,16 +131,6 @@ function actionMeta(eventType: string): { label: string; color: BadgeColor } {
   return { label: "Activity", color: "dark" };
 }
 
-function escapeHtml(value: string | number | null | undefined) {
-  return String(value ?? "-").replace(/[&<>'"]/g, (character) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    "'": "&#39;",
-    '"': "&quot;",
-  }[character] || character));
-}
-
 export default function AuditLogs() {
   const currentUser = getCurrentUser();
   const currentUserRole = currentUser?.role;
@@ -239,16 +230,16 @@ export default function AuditLogs() {
         const action = actionMeta(entry.event_type);
         return `
         <tr>
-          <td>${escapeHtml(formatDateTime(entry.created_at))}</td>
-          <td><span style="display:inline-block;padding:2px 8px;border-radius:9999px;background:${actionColors[action.color]};color:#fff;font-weight:700;font-size:9px;">${escapeHtml(action.label.toUpperCase())}</span></td>
-          <td>${escapeHtml(entry.entity_type)}</td>
-          <td>${escapeHtml(accountName(entry))}</td>
-          <td>${escapeHtml(roleLabel(entry.user_role))}</td>
-          <td>${escapeHtml(describeAuditEvent(entry, machinesByNo))}</td>
-          <td>${escapeHtml(entry.ip_address)}</td>
+          <td>${escapeHtmlValue(formatDateTime(entry.created_at))}</td>
+          <td><span style="display:inline-block;padding:2px 8px;border-radius:9999px;background:${actionColors[action.color]};color:#fff;font-weight:700;font-size:9px;">${escapeHtmlValue(action.label.toUpperCase())}</span></td>
+          <td>${escapeHtmlValue(entry.entity_type)}</td>
+          <td>${escapeHtmlValue(accountName(entry))}</td>
+          <td>${escapeHtmlValue(roleLabel(entry.user_role))}</td>
+          <td>${escapeHtmlValue(describeAuditEvent(entry, machinesByNo))}</td>
+          <td>${escapeHtmlValue(entry.ip_address)}</td>
         </tr>`;
       }).join("");
-      reportWindow.document.write(`<!doctype html>
+      writeAndPrintHtml(reportWindow, `<!doctype html>
         <html><head><title>PMO Audit Logs</title><style>
           @page { size: landscape; margin: 12mm; }
           body { color: #172033; font: 10px Arial, sans-serif; }
@@ -258,12 +249,9 @@ export default function AuditLogs() {
           th, td { border: 1px solid #cbd5e1; padding: 6px; text-align: left; vertical-align: top; word-break: break-word; }
           th { background: #eaf1ff; font-weight: 700; }
         </style></head><body>
-        <h1>PMO Audit Logs</h1><p>Generated ${escapeHtml(new Date().toLocaleString())}. Records: ${exportRows.length}.</p>
+        <h1>PMO Audit Logs</h1><p>Generated ${escapeHtmlValue(new Date().toLocaleString())}. Records: ${exportRows.length}.</p>
         <table><thead><tr><th>Time</th><th>Action</th><th>Table</th><th>User</th><th>Role</th><th>Description</th><th>IP Address</th></tr></thead>
         <tbody>${rows}</tbody></table></body></html>`);
-      reportWindow.document.close();
-      reportWindow.focus();
-      reportWindow.print();
     } catch (requestError) {
       reportWindow.close();
       setError(requestError instanceof Error ? requestError.message : "Failed to export audit logs");

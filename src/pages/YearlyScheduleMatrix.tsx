@@ -11,6 +11,7 @@ import {
   type MachineRecord,
   type PreventiveTypeRecord,
 } from "../services/pmoApi";
+import { escapeCsvValue, escapeHtmlValue, writeAndPrintHtml } from "../utils/exportHelpers";
 
 /**
  * NOTE FOR INTEGRATION
@@ -93,6 +94,8 @@ export default function YearlyScheduleMatrix() {
   const [searchText, setSearchText] = useState("");
   const MATRIX_ROWS_PAGE_SIZE = 20;
   const [currentMatrixPage, setCurrentMatrixPage] = useState(1);
+  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
+  const [hoveredColKey, setHoveredColKey] = useState<string | null>(null);
 
   // Unscoped ("All" years) - yearOptions below needs to see every year that
   // has ever had schedule/order data, not just the currently selected one.
@@ -416,10 +419,6 @@ export default function YearlyScheduleMatrix() {
     }));
   };
 
-  const exportEscapeCsv = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
-  const exportEscapeHtml = (value: unknown) =>
-    String(value ?? "").replace(/[&<>'"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[c] || c));
-
   const handleExportCsv = () => {
     if (activeTab === "Dashboard") return;
     const rows = buildExportRows();
@@ -446,7 +445,7 @@ export default function YearlyScheduleMatrix() {
       weekHeaderRow,
       ...dataRows,
     ]
-      .map((line) => line.map(exportEscapeCsv).join(","))
+      .map((line) => line.map(escapeCsvValue).join(","))
       .join("\r\n");
 
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -477,16 +476,16 @@ export default function YearlyScheduleMatrix() {
             month
               .map((cell) => {
                 const bg = cell?.status === "completed" ? "#bbf7d0" : cell?.status === "scheduled" ? "#fef08a" : "";
-                return `<td style="background:${bg};">${exportEscapeHtml(cell?.types.join(" + ") ?? "")}</td>`;
+                return `<td style="background:${bg};">${escapeHtmlValue(cell?.types.join(" + ") ?? "")}</td>`;
               })
               .join(""),
           )
           .join("");
         return `<tr>
-          <td>${exportEscapeHtml(machine.assetNumber)}</td>
-          <td>${exportEscapeHtml(machine.machineName)}</td>
+          <td>${escapeHtmlValue(machine.assetNumber)}</td>
+          <td>${escapeHtmlValue(machine.machineName)}</td>
           <td></td>
-          <td>${exportEscapeHtml(machine.location)}</td>
+          <td>${escapeHtmlValue(machine.location)}</td>
           <td></td>
           ${weekCells}
           <td></td>
@@ -494,8 +493,8 @@ export default function YearlyScheduleMatrix() {
       })
       .join("");
 
-    reportWindow.document.write(`<!doctype html>
-      <html><head><title>Yearly Schedule - ${exportEscapeHtml(activeTab)} ${selectedYear}</title><style>
+    writeAndPrintHtml(reportWindow, `<!doctype html>
+      <html><head><title>Yearly Schedule - ${escapeHtmlValue(activeTab)} ${selectedYear}</title><style>
         @page { size: A3 landscape; margin: 10mm; }
         body { color: #111; font: 8px Arial, sans-serif; }
         h1 { font-size: 14px; text-align: center; margin: 0 0 10px; }
@@ -504,7 +503,7 @@ export default function YearlyScheduleMatrix() {
         th { background: #f1f5f9; font-weight: 700; }
         td:nth-child(1), td:nth-child(2), td:nth-child(4) { text-align: left; }
       </style></head><body>
-      <h1>YEARLY PREVENTIVE ENGINEERING SCHEDULE - ${exportEscapeHtml(activeTab)} SUB DEPARTMENT (${selectedYear})</h1>
+      <h1>YEARLY PREVENTIVE ENGINEERING SCHEDULE - ${escapeHtmlValue(activeTab)} SUB DEPARTMENT (${selectedYear})</h1>
       <table>
         <thead>
           <tr><th rowspan="2">NO MESIN</th><th rowspan="2">NAMA MESIN</th><th rowspan="2">DAYA / KAPASITAS</th>
@@ -514,9 +513,6 @@ export default function YearlyScheduleMatrix() {
         <tbody>${bodyRows}</tbody>
       </table>
       </body></html>`);
-    reportWindow.document.close();
-    reportWindow.focus();
-    reportWindow.print();
   };
 
   const handleExportExcel = async () => {
@@ -866,35 +862,53 @@ export default function YearlyScheduleMatrix() {
                   </tr>
                   <tr>
                     {monthsToShow.flatMap((month) =>
-                      Array.from({ length: WEEKS_PER_MONTH }, (_, i) => (
-                        <th
-                          key={`${month}-w${i + 1}`}
-                          className="sticky z-20 border border-gray-200 bg-gray-50 px-1 py-1 text-center text-gray-700 dark:border-white/[0.05] dark:bg-gray-800 dark:text-gray-200"
-                          style={{ top: 28, minWidth: 26 }}
-                        >
-                          W{i + 1}
-                        </th>
-                      )),
+                      Array.from({ length: WEEKS_PER_MONTH }, (_, i) => {
+                        const week = i + 1;
+                        const colKey = cellKey(month, week);
+                        const isColHovered = hoveredColKey === colKey;
+                        return (
+                          <th
+                            key={colKey}
+                            onMouseEnter={() => setHoveredColKey(colKey)}
+                            onMouseLeave={() => setHoveredColKey(null)}
+                            className={`sticky z-20 border border-gray-200 px-1 py-1 text-center text-gray-700 transition-colors dark:border-white/[0.05] dark:text-gray-200 ${
+                              isColHovered ? "bg-brand-100 dark:bg-brand-500/20" : "bg-gray-50 dark:bg-gray-800"
+                            }`}
+                            style={{ top: 28, minWidth: 26 }}
+                          >
+                            W{week}
+                          </th>
+                        );
+                      }),
                     )}
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedMatrixMachines.map((machine) => (
+                  {paginatedMatrixMachines.map((machine) => {
+                    const isRowHovered = hoveredRowId === machine.machineId;
+                    const rowBg = isRowHovered ? "bg-brand-50 dark:bg-brand-500/10" : "bg-white dark:bg-gray-900";
+                    return (
                     <tr key={machine.machineId}>
                       <td
-                        className="border border-gray-200 bg-white px-2 py-1 font-medium text-gray-700 dark:border-white/[0.05] dark:bg-gray-900 dark:text-gray-200"
+                        onMouseEnter={() => setHoveredRowId(machine.machineId)}
+                        onMouseLeave={() => setHoveredRowId(null)}
+                        className={`border border-gray-200 px-2 py-1 font-medium text-gray-700 transition-colors dark:border-white/[0.05] dark:text-gray-200 ${rowBg}`}
                         style={{ position: "sticky", left: 0, zIndex: 10 }}
                       >
                         {machine.assetNumber}
                       </td>
                       <td
-                        className="border border-gray-200 bg-white px-2 py-1 text-gray-700 dark:border-white/[0.05] dark:bg-gray-900 dark:text-gray-200"
+                        onMouseEnter={() => setHoveredRowId(machine.machineId)}
+                        onMouseLeave={() => setHoveredRowId(null)}
+                        className={`border border-gray-200 px-2 py-1 text-gray-700 transition-colors dark:border-white/[0.05] dark:text-gray-200 ${rowBg}`}
                         style={{ position: "sticky", left: 90, zIndex: 10 }}
                       >
                         {machine.machineName}
                       </td>
                       <td
-                        className="border border-gray-200 bg-white px-2 py-1 text-gray-700 dark:border-white/[0.05] dark:bg-gray-900 dark:text-gray-200"
+                        onMouseEnter={() => setHoveredRowId(machine.machineId)}
+                        onMouseLeave={() => setHoveredRowId(null)}
+                        className={`border border-gray-200 px-2 py-1 text-gray-700 transition-colors dark:border-white/[0.05] dark:text-gray-200 ${rowBg}`}
                         style={{ position: "sticky", left: 290, zIndex: 10 }}
                       >
                         {machine.location}
@@ -902,17 +916,39 @@ export default function YearlyScheduleMatrix() {
                       {monthsToShow.map((month) =>
                         Array.from({ length: WEEKS_PER_MONTH }, (_, i) => {
                           const week = i + 1;
-                          const cell = matrix.get(machine.machineId)?.get(cellKey(month, week));
+                          const colKey = cellKey(month, week);
+                          const cell = matrix.get(machine.machineId)?.get(colKey);
                           const bg =
                             cell?.status === "completed"
                               ? "bg-green-300 dark:bg-green-700/70"
                               : cell?.status === "scheduled"
                                 ? "bg-yellow-200 dark:bg-yellow-600/60"
                                 : "";
+                          const isColHovered = hoveredColKey === colKey;
+                          // Ring instead of background, so the yellow/green
+                          // status colors above stay fully visible while
+                          // still showing which row/column is highlighted.
+                          // The exact hovered cell (both match) gets the
+                          // strongest ring - a plain row or column match
+                          // alone gets a lighter one.
+                          const ringClass =
+                            isRowHovered && isColHovered
+                              ? "ring-2 ring-inset ring-brand-500"
+                              : isRowHovered || isColHovered
+                                ? "ring-1 ring-inset ring-brand-300 dark:ring-brand-400/60"
+                                : "";
                           return (
                             <td
                               key={`${machine.machineId}-${month}-${week}`}
-                              className={`whitespace-nowrap border border-gray-200 px-1 py-1 text-center text-[9px] font-semibold text-gray-800 dark:border-white/[0.05] dark:text-gray-100 ${bg}`}
+                              onMouseEnter={() => {
+                                setHoveredRowId(machine.machineId);
+                                setHoveredColKey(colKey);
+                              }}
+                              onMouseLeave={() => {
+                                setHoveredRowId(null);
+                                setHoveredColKey(null);
+                              }}
+                              className={`whitespace-nowrap border border-gray-200 px-1 py-1 text-center text-[9px] font-semibold text-gray-800 transition-colors dark:border-white/[0.05] dark:text-gray-100 ${bg} ${ringClass}`}
                               title={cell?.types.join(" + ")}
                             >
                               {cell?.types.join(" + ") ?? ""}
@@ -921,7 +957,8 @@ export default function YearlyScheduleMatrix() {
                         }),
                       )}
                     </tr>
-                  ))}
+                    );
+                  })}
                   {!isLoading && currentMachines.length === 0 && (
                     <tr>
                       <td colSpan={3 + monthsToShow.length * WEEKS_PER_MONTH} className="px-4 py-6 text-center text-gray-400">
