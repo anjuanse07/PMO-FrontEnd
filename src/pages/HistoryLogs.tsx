@@ -69,6 +69,26 @@ type OrderResultRow = {
   justification: string | null;
 };
 
+// Same classification rule PreventiveMaintenanceOrder.tsx uses when
+// building its checklist sections, kept in sync so a machine's checklist
+// groups identically whether viewed from the order form or from here.
+function classifyPartMaster(partMaster: string): "electrical" | "mechanical" | "utilities" {
+  const lower = partMaster.toLowerCase();
+  if (lower.includes("electric") || lower.includes("wind") || lower.includes("listrik") || lower.includes("angin")) {
+    return "electrical";
+  }
+  if (lower.includes("mechanic") || lower.includes("mekanik")) {
+    return "mechanical";
+  }
+  return "utilities";
+}
+
+const CHECKLIST_SECTION_LABELS: Record<"mechanical" | "electrical" | "utilities", string> = {
+  mechanical: "Mechanical Part",
+  electrical: "Electrical Part",
+  utilities: "Other Utilities Part",
+};
+
 // -------------------------------------------------------------------------
 // Component
 // -------------------------------------------------------------------------
@@ -126,6 +146,18 @@ export default function HistoryLogs() {
   const [orderResults, setOrderResults] = useState<OrderResultRow[]>([]);
   const [isLoadingResults, setIsLoadingResults] = useState(false);
   const [resultsError, setResultsError] = useState("");
+
+  const groupedOrderResults = useMemo(() => {
+    const groups: Record<"mechanical" | "electrical" | "utilities", OrderResultRow[]> = {
+      mechanical: [],
+      electrical: [],
+      utilities: [],
+    };
+    for (const row of orderResults) {
+      groups[classifyPartMaster(row.part_master || "")].push(row);
+    }
+    return groups;
+  }, [orderResults]);
 
   // Load machines and technicians once
   useEffect(() => {
@@ -685,7 +717,7 @@ export default function HistoryLogs() {
               </div>
             </div>
 
-            <div className="mt-6">
+            <div className="mt-6 space-y-5">
               {isLoadingResults ? (
                 <p className="text-sm text-gray-500 dark:text-gray-400">Loading checklist...</p>
               ) : resultsError ? (
@@ -695,30 +727,41 @@ export default function HistoryLogs() {
                   No checklist is on file for this record (likely an imported legacy entry).
                 </p>
               ) : (
-                <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-                  <table className="min-w-full text-left text-sm">
-                    <thead className="bg-gray-50 dark:bg-gray-800/60">
-                      <tr>
-                        {["Checklist", "Action", "Standard", "Result", "Justification"].map((h) => (
-                          <th key={h} className="border-b border-gray-200 px-3 py-2 text-xs font-semibold uppercase text-gray-600 dark:border-gray-700 dark:text-gray-300">
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-                      {orderResults.map((row) => (
-                        <tr key={row.id}>
-                          <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.part_checklist}</td>
-                          <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.action || "-"}</td>
-                          <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.standard || "-"}</td>
-                          <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.result || "-"}</td>
-                          <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.justification || "-"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                (["mechanical", "electrical", "utilities"] as const).map((sectionKey) => {
+                  const rows = groupedOrderResults[sectionKey];
+                  if (!rows.length) return null;
+                  return (
+                    <div key={sectionKey} className="rounded-xl border border-gray-200 p-4 dark:border-gray-700">
+                      <h4 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">
+                        {CHECKLIST_SECTION_LABELS[sectionKey]}
+                      </h4>
+                      <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                        <table className="min-w-full text-left text-sm">
+                          <thead className="bg-gray-50 dark:bg-gray-800/60">
+                            <tr>
+                              {["Checklist", "Action", "Standard", "Result", "Justification"].map((h) => (
+                                <th key={h} className="border-b border-gray-200 px-3 py-2 text-xs font-semibold uppercase text-gray-600 dark:border-gray-700 dark:text-gray-300">
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100 dark:divide-white/[0.05]">
+                            {rows.map((row) => (
+                              <tr key={row.id}>
+                                <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.part_checklist}</td>
+                                <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.action || "-"}</td>
+                                <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.standard || "-"}</td>
+                                <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.result || "-"}</td>
+                                <td className="px-3 py-2 align-top text-gray-700 dark:text-gray-300">{row.justification || "-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
 

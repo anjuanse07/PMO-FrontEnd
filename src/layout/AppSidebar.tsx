@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router";
 
 // Assume these icons are imported from an icon library
@@ -35,14 +35,17 @@ const navItems: NavItem[] = [
     icon: <GridIcon />,
     name: "Dashboard",
     subItems: [{ name: "Preventive Dashboard", path: "/", pro: false },
-      { name: "Engineering Yearly Schedule", path: "/yearly-schedule-matrix", pro: false },
       { name: "User Profile", path: "/profile", pro: false }
     ],
   },
   {
     icon: <PageIcon />,
     name: "Preventive Schedule Assignment",
-    path: "/yearly-preventive-schedule",
+    subItems: [
+      { name: "Machines to Schedule", path: "/yearly-preventive-schedule/machines", pro: false },
+      { name: "Calendar & Matrix View", path: "/yearly-preventive-schedule/calendar-matrix", pro: false },
+      { name: "Scheduled Preventive Entries", path: "/yearly-preventive-schedule/entries", pro: false },
+    ],
   },
   // {
   //   icon: <GridIcon />,
@@ -66,7 +69,7 @@ const navItems: NavItem[] = [
   },
   {
     icon: <PlugInIcon />,
-    name: "Audit Log",
+    name: "Audit Logs",
     path: "/audit-logs",
     logViewerOnly: true,
   },
@@ -136,10 +139,23 @@ const AppSidebar: React.FC = () => {
   const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
   const location = useLocation();
   const currentUser = getCurrentUser();
+  // getCurrentUser() returns a fresh object reference on every call (it
+  // re-reads/parses on each render), so using it directly as a useMemo
+  // dependency below would never actually stabilize - every render would
+  // see a "changed" dependency. canViewLogs() reduces it to a plain
+  // boolean, which IS stable across renders unless the user's role
+  // actually changes.
+  const canViewLogsValue = canViewLogs(currentUser);
 
   // Nav items marked logViewerOnly (Audit Logs, History Log) are hidden
   // unless the logged-in user is a manager or engineering supervisor.
-  const visibleNavItems = navItems.filter((item) => !item.logViewerOnly || canViewLogs(currentUser));
+  // Memoized so its reference stays stable across renders - the auto-open
+  // effect below depends on it, and a fresh array/filter result every
+  // render would otherwise re-trigger that effect in a loop.
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => !item.logViewerOnly || canViewLogsValue),
+    [canViewLogsValue],
+  );
 
   const [openSubmenu, setOpenSubmenu] = useState<{
     type: "main" | "others";
@@ -156,29 +172,21 @@ const AppSidebar: React.FC = () => {
     [location.pathname]
   );
 
-  // useEffect(() => {
-  //   let submenuMatched = false;
-  //   ["main", "others"].forEach((menuType) => {
-  //     const items = menuType === "main" ? navItems : othersItems;
-  //     items.forEach((nav, index) => {
-  //       if (nav.subItems) {
-  //         nav.subItems.forEach((subItem) => {
-  //           if (isActive(subItem.path)) {
-  //             setOpenSubmenu({
-  //               type: menuType as "main" | "others",
-  //               index,
-  //             });
-  //             submenuMatched = true;
-  //           }
-  //         });
-  //       }
-  //     });
-  //   });
+  // Auto-open (and keep open) whichever dropdown contains the current
+  // page, no matter how the user got there - clicking the sidebar itself
+  // already works without this, but arriving via a notification link, a
+  // bookmark, or a page refresh previously left every dropdown collapsed
+  // even while its child page was the active one.
+  useEffect(() => {
+    let matchedIndex: number | null = null;
+    visibleNavItems.forEach((nav, index) => {
+      if (nav.subItems?.some((subItem) => isActive(subItem.path))) {
+        matchedIndex = index;
+      }
+    });
 
-  //   if (!submenuMatched) {
-  //     setOpenSubmenu(null);
-  //   }
-  // }, [location, isActive]);
+    setOpenSubmenu(matchedIndex !== null ? { type: "main", index: matchedIndex } : null);
+  }, [location.pathname, isActive, visibleNavItems]);
 
   useEffect(() => {
     if (openSubmenu !== null) {
@@ -229,7 +237,7 @@ const AppSidebar: React.FC = () => {
                 {nav.icon}
               </span>
               {(isExpanded || isHovered || isMobileOpen) && (
-                <span className="menu-item-text">{nav.name}</span>
+                <span className="menu-item-text text-left">{nav.name}</span>
               )}
               {(isExpanded || isHovered || isMobileOpen) && (
                 <ChevronDownIcon
@@ -257,7 +265,7 @@ const AppSidebar: React.FC = () => {
                   {nav.icon}
                 </span>
                 {(isExpanded || isHovered || isMobileOpen) && (
-                  <span className="menu-item-text">{nav.name}</span>
+                  <span className="menu-item-text text-left">{nav.name}</span>
                 )}
               </Link>
             )

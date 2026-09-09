@@ -97,10 +97,27 @@ function createResourceCache<T>(fetcher: (key: string) => Promise<T>) {
     };
   }
 
+  function invalidateAll() {
+    for (const [key, entry] of entries) {
+      if (entry.subscribers.size > 0) {
+        // Someone is actively displaying this key's data right now - force
+        // a real refetch so they get fresh data automatically. Just
+        // dropping the entry from the map (the old behavior) would silently
+        // orphan their subscription: they'd keep showing stale data forever,
+        // since nothing would ever call load() for them again.
+        void load(key, true);
+      } else {
+        // Nobody's currently showing this - safe to just drop it. The next
+        // component that mounts and requests this key fetches fresh anyway.
+        entries.delete(key);
+      }
+    }
+  }
+
   return {
     useResource,
     invalidate: (key: string) => entries.delete(key),
-    invalidateAll: () => entries.clear(),
+    invalidateAll,
   };
 }
 
@@ -142,6 +159,14 @@ export function useApprovedOrders(year?: number | "All") {
 }
 
 /**
+ * Fired whenever invalidateScheduleData() runs. Anything that cares about
+ * "did a schedule or order just change somewhere in the app" (currently:
+ * the notification bell's pending-approval counts) can listen for this
+ * instead of relying purely on its own polling interval.
+ */
+export const SCHEDULE_DATA_CHANGED_EVENT = "pmo-schedule-data-changed";
+
+/**
  * Call after any mutation that creates/updates/deletes a schedule or order
  * (saving a new plan, approving a stage, saving a checklist, etc.) so every
  * component reading this cache - not just the one that made the change -
@@ -150,4 +175,7 @@ export function useApprovedOrders(year?: number | "All") {
 export function invalidateScheduleData() {
   schedulesCache.invalidateAll();
   ordersCache.invalidateAll();
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SCHEDULE_DATA_CHANGED_EVENT));
+  }
 }

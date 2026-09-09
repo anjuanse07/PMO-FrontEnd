@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router";
+import { useNavigate } from "react-router";
 import { Dropdown } from "../ui/dropdown/Dropdown";
-import { DropdownItem } from "../ui/dropdown/DropdownItem";
 import { getCurrentUser, canViewLogs } from "../../auth/auth";
 import {
   fetchNotifications,
   type NotificationsResponse,
   type NotificationActivityItem,
 } from "../../services/pmoApi";
+import { SCHEDULE_DATA_CHANGED_EVENT } from "../../hooks/useScheduleData";
 
 // How often to re-poll for new notifications while the app is open.
 const POLL_INTERVAL_MS = 60_000;
@@ -76,7 +76,18 @@ export default function NotificationDropdown() {
   useEffect(() => {
     void loadNotifications();
     const interval = setInterval(() => void loadNotifications(), POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+
+    // Refresh immediately when any schedule/order mutation happens anywhere
+    // in the app (approve, delete, create, etc.), instead of waiting for
+    // the next poll - this is what makes the pending-approval count update
+    // right after you act on something, not up to 60s later.
+    const handleDataChanged = () => void loadNotifications();
+    window.addEventListener(SCHEDULE_DATA_CHANGED_EVENT, handleDataChanged);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(SCHEDULE_DATA_CHANGED_EVENT, handleDataChanged);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id]);
 
@@ -91,14 +102,18 @@ export default function NotificationDropdown() {
     }
   };
 
+  // Deferred by one tick (setTimeout 0) so the dropdown's own close/cleanup
+  // fully finishes before the route change happens - navigating in the
+  // exact same synchronous tick as closing risks orphaning whatever
+  // backdrop/overlay the dropdown renders while it's open.
   const handlePendingClick = (link: string) => {
     closeDropdown();
-    navigate(link);
+    setTimeout(() => navigate(link), 0);
   };
 
   const handleActivityClick = (item: NotificationActivityItem) => {
     closeDropdown();
-    if (item.link) navigate(item.link);
+    if (item.link) setTimeout(() => navigate(item.link!), 0);
   };
 
   const notifying = data.pending.length > 0 || unreadActivityCount > 0;
@@ -175,9 +190,10 @@ export default function NotificationDropdown() {
               </li>
               {data.pending.map((item) => (
                 <li key={item.id}>
-                  <DropdownItem
-                    onItemClick={() => handlePendingClick(item.link)}
-                    className={`flex items-start gap-3 rounded-lg border-b p-3 px-4.5 py-3 hover:bg-gray-100 dark:hover:bg-white/5 ${
+                  <button
+                    type="button"
+                    onClick={() => handlePendingClick(item.link)}
+                    className={`flex w-full items-start gap-3 rounded-lg border-b p-3 px-4.5 py-3 text-left hover:bg-gray-100 dark:hover:bg-white/5 ${
                       item.severity === "error"
                         ? "border-red-100 bg-red-50/60 dark:border-red-900/30 dark:bg-red-500/5"
                         : "border-amber-100 bg-amber-50/60 dark:border-amber-900/30 dark:bg-amber-500/5"
@@ -195,7 +211,7 @@ export default function NotificationDropdown() {
                     <span className="block text-theme-sm font-medium text-gray-800 dark:text-white/90">
                       {item.title}
                     </span>
-                  </DropdownItem>
+                  </button>
                 </li>
               ))}
             </>
@@ -208,9 +224,13 @@ export default function NotificationDropdown() {
               </li>
               {data.activity.map((item) => (
                 <li key={item.id}>
-                  <DropdownItem
-                    onItemClick={() => handleActivityClick(item)}
-                    className="flex gap-3 rounded-lg border-b border-gray-100 p-3 px-4.5 py-3 hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-white/5"
+                  <button
+                    type="button"
+                    onClick={() => handleActivityClick(item)}
+                    disabled={!item.link}
+                    className={`flex w-full gap-3 rounded-lg border-b border-gray-100 p-3 px-4.5 py-3 text-left dark:border-gray-800 ${
+                      item.link ? "hover:bg-gray-100 dark:hover:bg-white/5" : "cursor-default"
+                    }`}
                   >
                     <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-100 text-sm text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                       🛠️
@@ -229,20 +249,24 @@ export default function NotificationDropdown() {
                         <span>{timeAgo(item.createdAt)}</span>
                       </span>
                     </span>
-                  </DropdownItem>
+                  </button>
                 </li>
               ))}
             </>
           )}
         </ul>
 
-        <Link
-          to={canViewLogs(currentUser) ? "/audit-logs" : "/PreventiveMaintenanceOrder"}
-          onClick={closeDropdown}
-          className="block px-4 py-2 mt-3 text-sm font-medium text-center text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
+        <button
+          type="button"
+          onClick={() => {
+            const target = canViewLogs(currentUser) ? "/audit-logs" : "/PreventiveMaintenanceOrder";
+            closeDropdown();
+            setTimeout(() => navigate(target), 0);
+          }}
+          className="block w-full px-4 py-2 mt-3 text-sm font-medium text-center text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700"
         >
           {canViewLogs(currentUser) ? "View All Activity" : "View Preventive Orders"}
-        </Link>
+        </button>
       </Dropdown>
     </div>
   );

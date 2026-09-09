@@ -14,8 +14,9 @@ import BarChart from "./pages/Charts/BarChart";
 import Calendar from "./pages/Calendar";
 import AuditLogs from "./pages/AuditLogs";
 import OrderIcon from "./pages/PreventiveMaintenanceOrder";
-import YearlyPreventiveSchedule from "./pages/YearlyPreventiveSchedule";
-import YearlyScheduleMatrix from "./pages/YearlyScheduleMatrix";
+import PreventiveScheduleMachines from "./pages/PreventiveScheduleMachines";
+import PreventiveScheduleCalendarMatrix from "./pages/PreventiveScheduleCalendarMatrix";
+import PreventiveScheduleEntries from "./pages/PreventiveScheduleEntries";
 import MachineParameters from "./pages/MachineParameters";
 import BasicTables from "./pages/Tables/BasicTables";
 import FormElements from "./pages/Forms/FormElements";
@@ -47,8 +48,12 @@ export default function App() {
             <Route path="/profile" element={<UserProfiles />} />
             <Route path="/PreventiveMaintenanceOrder" element={<OrderIcon />} />
             <Route path="/machine-parameters" element={<MachineParameters />} />
-            <Route path="/yearly-preventive-schedule" element={<YearlyPreventiveSchedule />} />
-            <Route path="/yearly-schedule-matrix" element={<YearlyScheduleMatrix />} />
+            <Route path="/yearly-preventive-schedule/machines" element={<PreventiveScheduleMachines />} />
+            <Route path="/yearly-preventive-schedule/calendar-matrix" element={<PreventiveScheduleCalendarMatrix />} />
+            <Route path="/yearly-preventive-schedule/entries" element={<PreventiveScheduleEntries />} />
+            {/* Old bookmarks/links to the pre-split pages still land somewhere useful */}
+            <Route path="/yearly-preventive-schedule" element={<Navigate to="/yearly-preventive-schedule/machines" replace />} />
+            <Route path="/yearly-schedule-matrix" element={<Navigate to="/yearly-preventive-schedule/calendar-matrix" replace />} />
             <Route path="/calendar" element={<Calendar />} />
             <Route path="/audit-logs" element={<AuditLogs />} />
             <Route path="/history-logs" element={<HistoryLogs />} />
