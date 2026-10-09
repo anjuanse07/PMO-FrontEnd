@@ -28,6 +28,7 @@ export type AuditLogPage = {
 
 export type AuditLogFilters = {
   page: number;
+  pageSize?: number;
   search: string;
   activity: string;
   startAt: string;
@@ -40,6 +41,7 @@ function toAuditDateTime(value: string): string | null {
 
 export async function fetchAuditLogs(role: string, filters: AuditLogFilters): Promise<AuditLogPage> {
   const params = new URLSearchParams({ role, page: String(filters.page) });
+  if (filters.pageSize) params.set("page_size", String(filters.pageSize));
   if (filters.search) params.set("search", filters.search);
   if (filters.activity) params.set("activity", filters.activity);
   const startAt = toAuditDateTime(filters.startAt);

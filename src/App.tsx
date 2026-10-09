@@ -17,6 +17,7 @@ import OrderIcon from "./pages/PreventiveMaintenanceOrder";
 import PreventiveScheduleMachines from "./pages/PreventiveScheduleMachines";
 import PreventiveScheduleCalendarMatrix from "./pages/PreventiveScheduleCalendarMatrix";
 import PreventiveScheduleEntries from "./pages/PreventiveScheduleEntries";
+import PreventiveScheduleMatrixScheduling from "./pages/PreventiveScheduleMatrixScheduling";
 import MachineParameters from "./pages/MachineParameters";
 import BasicTables from "./pages/Tables/BasicTables";
 import FormElements from "./pages/Forms/FormElements";
@@ -51,6 +52,7 @@ export default function App() {
             <Route path="/yearly-preventive-schedule/machines" element={<PreventiveScheduleMachines />} />
             <Route path="/yearly-preventive-schedule/calendar-matrix" element={<PreventiveScheduleCalendarMatrix />} />
             <Route path="/yearly-preventive-schedule/entries" element={<PreventiveScheduleEntries />} />
+            <Route path="/yearly-preventive-schedule/matrix-scheduling" element={<PreventiveScheduleMatrixScheduling />} />
             {/* Old bookmarks/links to the pre-split pages still land somewhere useful */}
             <Route path="/yearly-preventive-schedule" element={<Navigate to="/yearly-preventive-schedule/machines" replace />} />
             <Route path="/yearly-schedule-matrix" element={<Navigate to="/yearly-preventive-schedule/calendar-matrix" replace />} />

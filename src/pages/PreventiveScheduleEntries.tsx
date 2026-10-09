@@ -76,8 +76,7 @@ const scheduledStatusTabs: { key: ScheduledStatusFilter; label: string; icon: st
   { key: "Completed", label: "Completed", icon: "✅" },
 ];
 
-// Formats an ISO date string down to just the date (no time), matching how
-// the Preventive Orders table shows approval dates.
+
 const formatApprovalDate = (isoDate: string | null | undefined): string | null => {
   if (!isoDate) return null;
   const parsed = new Date(isoDate);
@@ -102,18 +101,10 @@ export default function PreventiveScheduleEntries() {
   const [scheduledTypeFilter, setScheduledTypeFilter] = useState<PreventiveType | "All">("All");
   const [scheduledStatusFilter, setScheduledStatusFilter] = useState<ScheduledStatusFilter>("All");
   const [scheduledSearchText, setScheduledSearchText] = useState("");
-  // Defaults to false so entries already Approved by Manager (and their
-  // "Completed" descendants, see effectiveStatus above) are automatically
-  // hidden - the checkbox below still lets the user opt back in.
+  
   const [showApprovedByManager, setShowApprovedByManager] = useState(false);
   const [selectedEntryIds, setSelectedEntryIds] = useState<Set<string>>(new Set());
-  // Tracks entries with an approve/delete request currently in flight, so
-  // the corresponding button can be disabled - without this, a double-click
-  // (or a slow network round-trip + an impatient second click) can fire the
-  // same mutation twice. The first succeeds; the second then gets rejected
-  // by the backend's own status check (since by then the entry has already
-  // moved past the state the second request still thinks it's in), which
-  // is confusing since the UI hasn't caught up yet to show why.
+  
   const [entriesInFlight, setEntriesInFlight] = useState<Set<string>>(new Set());
   const [scheduledSortColumn, setScheduledSortColumn] = useState<ScheduledSortColumn>("asset");
   const [scheduledSortDirection, setScheduledSortDirection] = useState<SortDirection>("asc");
@@ -498,7 +489,7 @@ export default function PreventiveScheduleEntries() {
     return sorted;
   }, [baseFilteredScheduledEntries, scheduledStatusFilter, scheduledSortColumn, scheduledSortDirection]);
 
-  const SCHEDULED_ENTRIES_PAGE_SIZE = 25;
+  const [scheduledEntriesPageSize, setScheduledEntriesPageSize] = useState(25);
   const [currentScheduledEntriesPage, setCurrentScheduledEntriesPage] = useState(1);
 
   useEffect(() => {
@@ -513,18 +504,19 @@ export default function PreventiveScheduleEntries() {
     scheduledSearchText,
     scheduledSortColumn,
     scheduledSortDirection,
+    scheduledEntriesPageSize,
   ]);
 
-  const scheduledEntriesPageCount = Math.max(1, Math.ceil(filteredScheduledEntries.length / SCHEDULED_ENTRIES_PAGE_SIZE));
+  const scheduledEntriesPageCount = Math.max(1, Math.ceil(filteredScheduledEntries.length / scheduledEntriesPageSize));
 
   useEffect(() => {
     setCurrentScheduledEntriesPage((page) => Math.min(page, scheduledEntriesPageCount));
   }, [scheduledEntriesPageCount]);
 
   const paginatedScheduledEntries = useMemo(() => {
-    const start = (currentScheduledEntriesPage - 1) * SCHEDULED_ENTRIES_PAGE_SIZE;
-    return filteredScheduledEntries.slice(start, start + SCHEDULED_ENTRIES_PAGE_SIZE);
-  }, [filteredScheduledEntries, currentScheduledEntriesPage]);
+    const start = (currentScheduledEntriesPage - 1) * scheduledEntriesPageSize;
+    return filteredScheduledEntries.slice(start, start + scheduledEntriesPageSize);
+  }, [filteredScheduledEntries, currentScheduledEntriesPage, scheduledEntriesPageSize]);
 
   // Entries locked because a manager has already approved them - excluded from bulk selection entirely
   const selectableScheduledEntries = useMemo(
@@ -928,14 +920,30 @@ export default function PreventiveScheduleEntries() {
             </div>
 
             <div className="mt-3 flex flex-col items-center justify-between gap-2 px-1 sm:flex-row">
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                {filteredScheduledEntries.length === 0
-                  ? "No entries found"
-                  : `Showing ${(currentScheduledEntriesPage - 1) * SCHEDULED_ENTRIES_PAGE_SIZE + 1}-${Math.min(
-                      currentScheduledEntriesPage * SCHEDULED_ENTRIES_PAGE_SIZE,
-                      filteredScheduledEntries.length,
-                    )} of ${filteredScheduledEntries.length} entries`}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {filteredScheduledEntries.length === 0
+                    ? "No entries found"
+                    : `Showing ${(currentScheduledEntriesPage - 1) * scheduledEntriesPageSize + 1}-${Math.min(
+                        currentScheduledEntriesPage * scheduledEntriesPageSize,
+                        filteredScheduledEntries.length,
+                      )} of ${filteredScheduledEntries.length} entries`}
+                </span>
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  <span>Rows per page</span>
+                  <select
+                    value={scheduledEntriesPageSize}
+                    onChange={(e) => setScheduledEntriesPageSize(Number(e.target.value))}
+                    className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  >
+                    {[10, 25, 50, 100].map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"

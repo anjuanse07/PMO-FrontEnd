@@ -120,7 +120,6 @@ export default function HistoryLogs() {
   const [machineNo, setMachineNo] = useState(() => searchParams.get("machine_no") ?? "");
   const [machineId, setMachineId] = useState("");
   const [technician, setTechnician] = useState(() => searchParams.get("technician") ?? "");
-  const [status, setStatus] = useState("");
   const [startAt, setStartAt] = useState(() => searchParams.get("start_at") ?? "");
   const [endAt, setEndAt] = useState(() => searchParams.get("end_at") ?? "");
 
@@ -189,7 +188,6 @@ export default function HistoryLogs() {
           machineNo,
           machineId,
           technician,
-          status,
           startAt,
           endAt,
         });
@@ -202,7 +200,7 @@ export default function HistoryLogs() {
     };
 
     void loadLogs();
-  }, [canViewHistoryLogs, currentUserRole, search, mainSub, childSub, machineNo, machineId, technician, status, startAt, endAt, refreshKey]);
+  }, [canViewHistoryLogs, currentUserRole, search, mainSub, childSub, machineNo, machineId, technician, startAt, endAt, refreshKey]);
 
   // Child-sub options narrow to whatever main sub is selected
   const childSubOptions = useMemo(() => {
@@ -343,7 +341,6 @@ export default function HistoryLogs() {
         machineNo,
         machineId,
         technician,
-        status,
         startAt,
         endAt,
       });
@@ -458,12 +455,6 @@ export default function HistoryLogs() {
               <option key={sub} value={sub}>{sub}</option>
             ))}
           </select>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputClass} style={{ width: 170 }}>
-            <option value="">All Statuses</option>
-            <option value="In Progress">In Progress</option>
-            <option value="Approval">Approval</option>
-            <option value="Completed">Completed</option>
-          </select>
         </div>
 
         {/* Filters row 2: machine name / id / technician + dates */}
@@ -517,7 +508,6 @@ export default function HistoryLogs() {
               setMachineNo("");
               setMachineId("");
               setTechnician("");
-              setStatus("");
               setStartAt("");
               setEndAt("");
               setRefreshKey((v) => v + 1);

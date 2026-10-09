@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useSearchParams } from "react-router";
 import { useApprovedOrders, invalidateScheduleData } from "../hooks/useScheduleData";
 import PageBreadcrumb from "../components/common/PageBreadCrumb";
@@ -218,6 +218,22 @@ export default function PreventiveMaintenanceOrder() {
   const { orders: approvedOrderRows, isLoadingOrders, refetchOrders } = useApprovedOrders("All");
   const [machineParameters, setMachineParameters] = useState<MachineParameterRecord[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const preventiveDateRef = useRef<HTMLInputElement>(null);
+  const preventiveTimeStartRef = useRef<HTMLInputElement>(null);
+  const preventiveTimeEndRef = useRef<HTMLInputElement>(null);
+
+  // Native date/time inputs already open their picker via their own
+  // built-in icon, but that icon can end up invisible depending on
+  // browser/CSS resets. showPicker() (Chrome/Edge 99+, Firefox 101+) opens
+  // the exact same native picker programmatically, so a custom icon can
+  // trigger it directly regardless of whether the native one is visible.
+  const openPicker = (ref: RefObject<HTMLInputElement | null>) => {
+    if (typeof ref.current?.showPicker === "function") {
+      ref.current.showPicker();
+    } else {
+      ref.current?.focus();
+    }
+  };
 
   const maintenanceOrders: MaintenanceOrder[] = useMemo(
     () =>
@@ -418,7 +434,7 @@ export default function PreventiveMaintenanceOrder() {
     });
   }, [baseFilteredOrders, approvedOrdersById, statusFilter, showCompleted, orderSortColumn, orderSortDirection]);
 
-  const ORDERS_PAGE_SIZE = 25;
+  const [ordersPageSize, setOrdersPageSize] = useState(25);
   const [currentOrdersPage, setCurrentOrdersPage] = useState(1);
 
   // Reset to page 1 whenever the filtered/sorted order list changes underneath the table
@@ -436,18 +452,19 @@ export default function PreventiveMaintenanceOrder() {
     showCompleted,
     orderSortColumn,
     orderSortDirection,
+    ordersPageSize,
   ]);
 
-  const ordersPageCount = Math.max(1, Math.ceil(filteredOrders.length / ORDERS_PAGE_SIZE));
+  const ordersPageCount = Math.max(1, Math.ceil(filteredOrders.length / ordersPageSize));
 
   useEffect(() => {
     setCurrentOrdersPage((page) => Math.min(page, ordersPageCount));
   }, [ordersPageCount]);
 
   const paginatedOrders = useMemo(() => {
-    const start = (currentOrdersPage - 1) * ORDERS_PAGE_SIZE;
-    return filteredOrders.slice(start, start + ORDERS_PAGE_SIZE);
-  }, [filteredOrders, currentOrdersPage]);
+    const start = (currentOrdersPage - 1) * ordersPageSize;
+    return filteredOrders.slice(start, start + ordersPageSize);
+  }, [filteredOrders, currentOrdersPage, ordersPageSize]);
 
   const openForm = async (order: MaintenanceOrder) => {
     setSelectedOrder(order);
@@ -683,14 +700,16 @@ export default function PreventiveMaintenanceOrder() {
     }
 
     const techniciansText = technicians.map((name) => name.trim()).filter(Boolean).join(", ");
+    const checklistRows = (Object.values(formData.checklist) as ChecklistRow[][]).flat();
+    const allResultsFilled = checklistRows.length > 0 && checklistRows.every((row) => row.result.trim() !== "");
     const nextStatus: OrderStatus = formData.approvals.engineering.approved
       ? "Completed"
-      : "Approval";
+      : allResultsFilled
+        ? "Approval"
+        : "In Progress";
     setIsSaving(true);
     try {
-      const resultItems = (Object.values(formData.checklist) as ChecklistRow[][])
-        .flat()
-        .map((row) => ({
+      const resultItems = checklistRows.map((row) => ({
           parameter_id: row.parameterId,
           result: row.result.trim() || null,
           justification: row.justification.trim() || "NA",
@@ -744,7 +763,7 @@ export default function PreventiveMaintenanceOrder() {
   return (
     <>
       <PageMeta
-        title="Preventive Maintenance Orders"
+        // title="Preventive Maintenance Orders"
         description="List of preventive maintenance records and machine inspection forms"
       />
       <PageBreadcrumb pageTitle="Preventive Maintenance Orders" />
@@ -1049,14 +1068,30 @@ export default function PreventiveMaintenanceOrder() {
             </div>
 
             <div className="mt-3 flex flex-col items-center justify-between gap-2 px-1 sm:flex-row">
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                {filteredOrders.length === 0
-                  ? "No orders found"
-                  : `Showing ${(currentOrdersPage - 1) * ORDERS_PAGE_SIZE + 1}-${Math.min(
-                      currentOrdersPage * ORDERS_PAGE_SIZE,
-                      filteredOrders.length,
-                    )} of ${filteredOrders.length} orders`}
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {filteredOrders.length === 0
+                    ? "No orders found"
+                    : `Showing ${(currentOrdersPage - 1) * ordersPageSize + 1}-${Math.min(
+                        currentOrdersPage * ordersPageSize,
+                        filteredOrders.length,
+                      )} of ${filteredOrders.length} orders`}
+                </span>
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  <span>Rows per page</span>
+                  <select
+                    value={ordersPageSize}
+                    onChange={(e) => setOrdersPageSize(Number(e.target.value))}
+                    className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  >
+                    {[10, 25, 50, 100].map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
@@ -1140,35 +1175,79 @@ export default function PreventiveMaintenanceOrder() {
 
               <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
                 <span>Preventive Date</span>
-                <input
-                  type="date"
-                  value={formData.preventiveDate}
-                  disabled={isLocked}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, preventiveDate: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
-                />
+                <div className="relative">
+                  <input
+                    ref={preventiveDateRef}
+                    type="date"
+                    value={formData.preventiveDate}
+                    disabled={isLocked}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, preventiveDate: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 pr-10 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => openPicker(preventiveDateRef)}
+                    disabled={isLocked}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-brand-500 disabled:cursor-not-allowed disabled:hover:text-gray-400"
+                    aria-label="Open date picker"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M8 2v3M16 2v3M3.5 9h17M4 6h16a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
               </label>
 
               <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
                 <span>Time Start</span>
-                <input
-                  type="time"
-                  value={formData.preventiveTimeStart}
-                  disabled={isLocked}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, preventiveTimeStart: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
-                />
+                <div className="relative">
+                  <input
+                    ref={preventiveTimeStartRef}
+                    type="time"
+                    value={formData.preventiveTimeStart}
+                    disabled={isLocked}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, preventiveTimeStart: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 pr-10 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => openPicker(preventiveTimeStartRef)}
+                    disabled={isLocked}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-brand-500 disabled:cursor-not-allowed disabled:hover:text-gray-400"
+                    aria-label="Open time picker"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+                      <path d="M12 7v5l3.5 2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
               </label>
 
               <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
                 <span>Time End</span>
-                <input
-                  type="time"
-                  value={formData.preventiveTimeEnd}
-                  disabled={isLocked}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, preventiveTimeEnd: e.target.value }))}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60"
-                />
+                <div className="relative">
+                  <input
+                    ref={preventiveTimeEndRef}
+                    type="time"
+                    value={formData.preventiveTimeEnd}
+                    disabled={isLocked}
+                    onChange={(e) => setFormData((prev) => ({ ...prev, preventiveTimeEnd: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 pr-10 text-sm outline-none ring-0 focus:border-brand-500 disabled:cursor-not-allowed disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:disabled:bg-gray-800/60 [&::-webkit-calendar-picker-indicator]:opacity-0"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => openPicker(preventiveTimeEndRef)}
+                    disabled={isLocked}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-brand-500 disabled:cursor-not-allowed disabled:hover:text-gray-400"
+                    aria-label="Open time picker"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+                      <path d="M12 7v5l3.5 2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
               </label>
 
               <label className="space-y-2 text-sm text-gray-700 dark:text-gray-300">

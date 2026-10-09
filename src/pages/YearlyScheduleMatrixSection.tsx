@@ -90,7 +90,7 @@ export default function YearlyScheduleMatrixSection() {
   const [preventiveTypes, setPreventiveTypes] = useState<PreventiveTypeRecord[]>([]);
   const [isLoadingMachines, setIsLoadingMachines] = useState(true);
   const [searchText, setSearchText] = useState("");
-  const MATRIX_ROWS_PAGE_SIZE = 20;
+  const [matrixPageSize, setMatrixPageSize] = useState(20);
   const [currentMatrixPage, setCurrentMatrixPage] = useState(1);
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
   const [hoveredColKey, setHoveredColKey] = useState<string | null>(null);
@@ -335,9 +335,9 @@ export default function YearlyScheduleMatrixSection() {
   // Reset to page 1 whenever the filtered row set changes underneath the table
   useEffect(() => {
     setCurrentMatrixPage(1);
-  }, [activeTab, childSubFilter, selectedYear, selectedMonths, searchText]);
+  }, [activeTab, childSubFilter, selectedYear, selectedMonths, searchText, matrixPageSize]);
 
-  const matrixPageCount = Math.max(1, Math.ceil(currentMachines.length / MATRIX_ROWS_PAGE_SIZE));
+  const matrixPageCount = Math.max(1, Math.ceil(currentMachines.length / matrixPageSize));
 
   useEffect(() => {
     setCurrentMatrixPage((page) => Math.min(page, matrixPageCount));
@@ -346,10 +346,10 @@ export default function YearlyScheduleMatrixSection() {
   const paginatedMatrixMachines = useMemo(
     () =>
       currentMachines.slice(
-        (currentMatrixPage - 1) * MATRIX_ROWS_PAGE_SIZE,
-        currentMatrixPage * MATRIX_ROWS_PAGE_SIZE,
+        (currentMatrixPage - 1) * matrixPageSize,
+        currentMatrixPage * matrixPageSize,
       ),
-    [currentMachines, currentMatrixPage],
+    [currentMachines, currentMatrixPage, matrixPageSize],
   );
 
   // progress dashboard stats: per sub and per sub+month
@@ -963,11 +963,27 @@ export default function YearlyScheduleMatrixSection() {
 
             {!isLoading && currentMachines.length > 0 && (
               <div className="mt-3 flex flex-col items-center justify-between gap-2 sm:flex-row">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  Showing {(currentMatrixPage - 1) * MATRIX_ROWS_PAGE_SIZE + 1}-
-                  {Math.min(currentMatrixPage * MATRIX_ROWS_PAGE_SIZE, currentMachines.length)} of{" "}
-                  {currentMachines.length} machines
-                </span>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    Showing {(currentMatrixPage - 1) * matrixPageSize + 1}-
+                    {Math.min(currentMatrixPage * matrixPageSize, currentMachines.length)} of{" "}
+                    {currentMachines.length} machines
+                  </span>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    <span>Rows per page</span>
+                    <select
+                      value={matrixPageSize}
+                      onChange={(e) => setMatrixPageSize(Number(e.target.value))}
+                      className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                    >
+                      {[10, 20, 50, 100].map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setCurrentMatrixPage((p) => Math.max(1, p - 1))}

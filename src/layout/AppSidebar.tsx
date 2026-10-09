@@ -45,6 +45,7 @@ const navItems: NavItem[] = [
       { name: "Machines to Schedule", path: "/yearly-preventive-schedule/machines", pro: false },
       { name: "Calendar & Matrix View", path: "/yearly-preventive-schedule/calendar-matrix", pro: false },
       { name: "Scheduled Preventive Entries", path: "/yearly-preventive-schedule/entries", pro: false },
+      { name: "Matrix Scheduling (Experimental)", path: "/yearly-preventive-schedule/matrix-scheduling", pro: false },
     ],
   },
   // {

@@ -58,7 +58,7 @@ export default function PreventiveScheduleMachines() {
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [searchText, setSearchText] = useState("");
   const [currentMachinesPage, setCurrentMachinesPage] = useState(1);
-  const MACHINES_PAGE_SIZE = 15;
+  const [machinesPageSize, setMachinesPageSize] = useState(15);
   const [preventiveTypes, setPreventiveTypes] = useState<
     Array<{ id: number; abbreviation: string; parameter: string }>
   >([]);
@@ -212,18 +212,18 @@ export default function PreventiveScheduleMachines() {
   // Reset to page 1 whenever the filtered/sorted machine list changes underneath the table
   useEffect(() => {
     setCurrentMachinesPage(1);
-  }, [selectedSub, searchText, sortColumn, sortDirection]);
+  }, [selectedSub, searchText, sortColumn, sortDirection, machinesPageSize]);
 
-  const machinesPageCount = Math.max(1, Math.ceil(machinesForSub.length / MACHINES_PAGE_SIZE));
+  const machinesPageCount = Math.max(1, Math.ceil(machinesForSub.length / machinesPageSize));
 
   useEffect(() => {
     setCurrentMachinesPage((page) => Math.min(page, machinesPageCount));
   }, [machinesPageCount]);
 
   const paginatedMachinesForSub = useMemo(() => {
-    const start = (currentMachinesPage - 1) * MACHINES_PAGE_SIZE;
-    return machinesForSub.slice(start, start + MACHINES_PAGE_SIZE);
-  }, [machinesForSub, currentMachinesPage]);
+    const start = (currentMachinesPage - 1) * machinesPageSize;
+    return machinesForSub.slice(start, start + machinesPageSize);
+  }, [machinesForSub, currentMachinesPage, machinesPageSize]);
 
   const toggleType = (machineId: string, type: PreventiveType) => {
     setSelectedTypes((prev) => {
@@ -610,14 +610,30 @@ export default function PreventiveScheduleMachines() {
                 </p>
 
                 <div className="mt-3 flex flex-col items-center justify-between gap-2 sm:flex-row">
-                  <span className="text-xs text-gray-500 dark:text-gray-400">
-                    {machinesForSub.length === 0
-                      ? "No machines found"
-                      : `Showing ${(currentMachinesPage - 1) * MACHINES_PAGE_SIZE + 1}-${Math.min(
-                          currentMachinesPage * MACHINES_PAGE_SIZE,
-                          machinesForSub.length,
-                        )} of ${machinesForSub.length} machines`}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      {machinesForSub.length === 0
+                        ? "No machines found"
+                        : `Showing ${(currentMachinesPage - 1) * machinesPageSize + 1}-${Math.min(
+                            currentMachinesPage * machinesPageSize,
+                            machinesForSub.length,
+                          )} of ${machinesForSub.length} machines`}
+                    </span>
+                    <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                      <span>Rows per page</span>
+                      <select
+                        value={machinesPageSize}
+                        onChange={(e) => setMachinesPageSize(Number(e.target.value))}
+                        className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                      >
+                        {[10, 15, 25, 50, 100].map((size) => (
+                          <option key={size} value={size}>
+                            {size}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"

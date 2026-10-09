@@ -151,6 +151,7 @@ export default function AuditLogs() {
   const [startAt, setStartAt] = useState("");
   const [endAt, setEndAt] = useState("");
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -166,7 +167,7 @@ export default function AuditLogs() {
       setIsLoading(true);
       setError("");
       try {
-        const result = await fetchAuditLogs(currentUserRole ?? "", { page, search, activity, startAt, endAt });
+        const result = await fetchAuditLogs(currentUserRole ?? "", { page, pageSize, search, activity, startAt, endAt });
         setLogs(result.rows);
         setTotal(result.total);
         setTotalPages(result.totalPages);
@@ -179,7 +180,7 @@ export default function AuditLogs() {
     };
 
     void loadInitialLogs();
-  }, [activity, canViewAuditLogs, currentUserRole, endAt, page, refreshKey, search, startAt]);
+  }, [activity, canViewAuditLogs, currentUserRole, endAt, page, pageSize, refreshKey, search, startAt]);
 
   const exportLogs = async () => {
     if (!currentUser || !canViewAuditLogs) return;
@@ -395,7 +396,26 @@ export default function AuditLogs() {
           )}
           {!error && !isLoading && (
             <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-5 py-4 text-sm text-gray-600 dark:border-white/[0.05] dark:text-gray-300 sm:px-6">
-              <span>Page {page} of {totalPages}</span>
+              <div className="flex items-center gap-3">
+                <span>Page {page} of {totalPages} · {total} total</span>
+                <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  <span>Rows per page</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => {
+                      setPageSize(Number(e.target.value));
+                      setPage(1);
+                    }}
+                    className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-xs outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  >
+                    {[25, 50, 100, 200].map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div className="flex gap-2">
                 <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1} className="border border-gray-300 px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700">Previous</button>
                 <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page >= totalPages} className="border border-gray-300 px-3 py-2 font-medium disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-700">Next</button>
